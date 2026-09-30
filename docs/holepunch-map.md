@@ -1,41 +1,23 @@
 # Holepunch Component Map
 
-Reference architecture of the Holepunch stack (728 repos in the
-[holepunchto](https://github.com/holepunchto) org). This is a map for
-studying their design — orbit's own protocol will be written in Kotlin,
-using these modules only as a reference.
+This document is a reference map of the [Holepunch ecosystem](https://github.com/holepunchto), not Orbit's implemented dependency graph. Orbit is planned around its own Rust protocol, with Kotlin Multiplatform bridges and clients.
+
+See the [architecture decision](adr/0001-rust-core-kmp-clients.md), [reviewed architecture](architecture/rust-kmp.md), and [implementation roadmap](roadmap.md). The architecture document maps these functions to proposed Orbit modules.
 
 ## Layer overview
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Apps: Keet, PearPass, Autopass, Hypershell, Hyperbeam   │
-├─────────────────────────────────────────────────────────┤
-│  Deploy: pear (CLI), pear-runtime, pear-install         │
-├─────────────────────────────────────────────────────────┤
-│  Runtime: bare, bare-kit, bare-worker, bare-thread      │
-│           libjs / libqjs / libjsc / libjerry / libmqjs  │
-├─────────────────────────────────────────────────────────┤
-│  Protocol: protomux, compact-encoding,                  │
-│            @hyperswarm/secret-stream, hyperbeam, hrpc   │
-├─────────────────────────────────────────────────────────┤
-│  Delivery: blind-peering, blind-peer, blind-peer-muxer  │
-├─────────────────────────────────────────────────────────┤
-│  Invites: blind-pairing, blind-pairing-core             │
-├─────────────────────────────────────────────────────────┤
-│  Identity: keet-identity-key, keypear                   │
-├─────────────────────────────────────────────────────────┤
-│  Files: hyperdrive, localdrive, mirror-drive, hyperblobs│
-├─────────────────────────────────────────────────────────┤
-│  Collaboration: autobase, hyperdb                       │
-├─────────────────────────────────────────────────────────┤
-│  Data: hypercore, hyperbee, corestore                   │
-├─────────────────────────────────────────────────────────┤
-│  Networking: hyperswarm, hyperdht, libudx               │
-├─────────────────────────────────────────────────────────┤
-│  Native: libsodium (crypto), libuv (I/O), CMake         │
-└─────────────────────────────────────────────────────────┘
-```
+| Layer | Reference components |
+|---|---|
+| Applications | Keet, PearPass, Autopass, Hypershell, Hyperbeam |
+| Deployment | pear, pear-runtime, pear-install |
+| JavaScript runtime | bare, bare-kit, workers, libjs and alternative engines |
+| Protocol | compact-encoding, protomux, secret-stream, hrpc |
+| Offline delivery | blind-peering, blind-peer, blind-peer-muxer |
+| Invitations and identity | blind-pairing, keet-identity-key, keypear |
+| Files | hyperdrive, localdrive, mirror-drive, hyperblobs |
+| Collaboration and data | autobase, hyperdb, hypercore, hyperbee, corestore |
+| Networking | hyperswarm, hyperdht, libudx |
+| Native foundation | libsodium, libuv, CMake |
 
 ## Networking
 
@@ -134,13 +116,21 @@ using these modules only as a reference.
    every room is a set of cores, not a database row.
 2. **Multi-writer merge** (Autobase) instead of a single server-side
    ordering — conflicts resolved by linearisation, not locks.
-3. **Blind peers** for offline delivery — encrypted mirrors held by
-   untrusted nodes, no server knows content or participants.
-4. **Invite codes** (blind-pairing) that never expose long-term keys.
+3. **Blind peers** for offline delivery — encrypted replicas held by
+   untrusted nodes. Content encryption does not by itself conceal IP addresses,
+   timing, traffic volume, or all participant metadata.
+4. **Invitation protocols** (blind-pairing) as a reference for authenticated
+   joining. Orbit needs its own specified capability and verification rules.
 5. **Swappable JS engine** (libjs) — the same app can run on V8,
    QuickJS, or JavaScriptCore without code changes.
 
 ## What orbit takes from this
 
-- Architecture patterns above → reimplemented in Kotlin.
-- Nothing is vendored or linked at runtime; the map is a study aid.
+- Reuse the relevant ideas in a Rust core with a versioned Orbit application protocol.
+- Keep bridges, platform adapters, and clients in Kotlin Multiplatform.
+- Start with `orbit-core` and `orbit-ffi`; extract other crates when their boundaries are demonstrated.
+- Use existing transport, cryptographic, and media libraries after platform experiments.
+- JavaScript engines, Bare, and Pear are reference material, not planned Orbit runtime requirements.
+- Root `package.json` currently remains a historical dependency inventory. Its cleanup is tracked in the roadmap; installed packages do not demonstrate an implemented integration.
+- Protocol and storage compatibility with Holepunch are not requirements of the selected design.
+
