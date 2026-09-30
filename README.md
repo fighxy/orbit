@@ -30,14 +30,14 @@ P2P messenger client built on the Holepunch stack. No servers, no accounts — m
 | Runtime | pear-runtime | `pear-runtime` | Embeddable runtime with P2P over-the-air updates |
 | Deploy | pear | `pear` (CLI) | Build, stage, seed, and update P2P apps |
 
-## Architecture (planned)
+## Architecture
 
 ```
-UI (SwiftUI / Android Views / Compose)
+UI (SwiftUI / Jetpack Compose)
   │
 ViewModel
   │
-Repository  │─►  local DB (SwiftData / Room / SQLDelight)
+Repository  │─►  local DB (Room / SwiftData)
   │─►  Autobase room (messages, members, events)
   │─►  Hyperdrive (media cache)
   │─►  Hyperswarm (network)
@@ -49,9 +49,28 @@ Repository  │─►  local DB (SwiftData / Room / SQLDelight)
 - **Offline delivery** = `blind-peering` asks blind peers to mirror encrypted cores; messages sync whenever any peer comes online.
 - **Media** = Hyperdrive for files, streamed with previews and on-demand originals.
 
+## Project layout
+
+```
+shared/                 Kotlin Multiplatform core (logic, identity, rooms, messaging)
+  commonMain/           Platform-independent code + expect declarations
+  androidMain/          Room, Android Keystore
+  iosMain/              SwiftData bridge, Keychain
+androidApp/             Android client (Jetpack Compose) — TODO
+iosApp/                 iOS client (SwiftUI) — TODO
+package.json            Holepunch JS dependencies (npm)
+```
+
+The `shared` module is the single source of truth for business logic. Platform apps
+consume it as a Gradle dependency (Android) or a static framework `OrbitShared` (iOS).
+
+Holepunch modules run in the JS layer (Node / bare runtime) and are bridged into
+Kotlin via expect/actual or FFI. The JS dependency tree lives in `package.json`.
+
 ## Status
 
-Early stage. Repository initialised with stack documentation; client code not started yet.
+Early stage. `shared` KMP scaffold added: identity, room, messaging models,
+expect/actual stubs for local DB and key storage. Client apps not started.
 
 ## License
 
