@@ -10,6 +10,11 @@ kotlin {
             kotlinOptions.jvmTarget = "17"
         }
     }
+    jvm {
+        compilations.all {
+            kotlinOptions.jvmTarget = "17"
+        }
+    }
     listOf(
         iosX64(),
         iosArm64(),
@@ -20,6 +25,11 @@ kotlin {
             isStatic = true
         }
     }
+    // Desktop targets: Windows, Linux, macOS (x64 + Apple Silicon)
+    mingwX64()
+    linuxX64()
+    macosX64()
+    macosArm64()
     sourceSets {
         val commonMain by getting {
             dependencies {
@@ -46,6 +56,16 @@ kotlin {
         val iosMain by creating {
             dependsOn(commonMain)
         }
+        val desktopMain by creating {
+            dependsOn(commonMain)
+        }
+        val jvmMain by creating {
+            dependsOn(desktopMain)
+        }
+        val mingwX64Main by getting { dependsOn(desktopMain) }
+        val linuxX64Main by getting { dependsOn(desktopMain) }
+        val macosX64Main by getting { dependsOn(desktopMain) }
+        val macosArm64Main by getting { dependsOn(desktopMain) }
     }
 }
 

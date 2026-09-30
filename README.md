@@ -33,11 +33,11 @@ P2P messenger client built on the Holepunch stack. No servers, no accounts — m
 ## Architecture
 
 ```
-UI (SwiftUI / Jetpack Compose)
+UI (SwiftUI / Jetpack Compose / Compose Desktop)
   │
 ViewModel
   │
-Repository  │─►  local DB (Room / SwiftData)
+Repository  │─►  local DB (Room / SwiftData / SQLite)
   │─►  Autobase room (messages, members, events)
   │─►  Hyperdrive (media cache)
   │─►  Hyperswarm (network)
@@ -56,20 +56,24 @@ shared/                 Kotlin Multiplatform core (logic, identity, rooms, messa
   commonMain/           Platform-independent code + expect declarations
   androidMain/          Room, Android Keystore
   iosMain/              SwiftData bridge, Keychain
+  desktopMain/          SQLite file store, OS keyring stubs (Windows / Linux / macOS)
 androidApp/             Android client (Jetpack Compose) — TODO
 iosApp/                 iOS client (SwiftUI) — TODO
+desktopApp/             Desktop client (Compose Desktop) — TODO
 package.json            Holepunch JS dependencies (npm)
 ```
 
 The `shared` module is the single source of truth for business logic. Platform apps
-consume it as a Gradle dependency (Android) or a static framework `OrbitShared` (iOS).
+consume it as a Gradle dependency (Android, desktop) or a static framework
+`OrbitShared` (iOS).
 
 Holepunch modules run in the JS layer (Node / bare runtime) and are bridged into
 Kotlin via expect/actual or FFI. The JS dependency tree lives in `package.json`.
 
 ## Status
 
-Early stage. `shared` KMP scaffold added: identity, room, messaging models,
+Early stage. `shared` KMP scaffold covers Android, iOS, and desktop (Windows,
+Linux, macOS x64 + Apple Silicon): identity, room, messaging models,
 expect/actual stubs for local DB and key storage. Client apps not started.
 
 ## License
