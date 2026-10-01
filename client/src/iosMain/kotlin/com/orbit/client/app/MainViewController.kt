@@ -1,0 +1,24 @@
+package com.orbit.client.app
+
+import androidx.compose.ui.window.ComposeUIViewController
+import com.orbit.sdk.OrbitSdk
+import com.orbit.sdk.bridge.IosNativeLibrary
+import com.orbit.sdk.platform.IosPaths
+import com.orbit.sdk.platform.KeychainSecretStore
+import kotlinx.coroutines.MainScope
+import platform.UIKit.UIViewController
+
+/**
+ * iOS entry point for the Xcode host: `MainViewControllerKt.MainViewController()`.
+ * One engine per process; it stays open while the app runs.
+ */
+fun MainViewController(): UIViewController {
+    val sdk = OrbitSdk(
+        native = IosNativeLibrary,
+        secretStore = KeychainSecretStore(),
+        dataDir = IosPaths.dataDir(),
+    )
+    val controller = AppController(sdk.asGateway(), MainScope())
+    controller.start()
+    return ComposeUIViewController { OrbitApp(controller) }
+}

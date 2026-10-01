@@ -26,8 +26,8 @@ messenger client on the Rust core.
 
 Not implemented yet: networking, contacts and invitations, E2EE between
 devices, groups, channels, voice, attachments, backup and restore. The app does
-not request network access. The iOS bridge and Keychain store compile in CI on
-macOS but have not run on a device; there is no Xcode host app yet.
+not request network access. The iOS bridge, Keychain store and Xcode host build in CI
+on macOS but have not run on a simulator or device yet.
 
 ## Planned architecture
 
@@ -84,7 +84,7 @@ and media E2EE are separate integration requirements.
 | `shared/` | Implemented (stage 0) | KMP SDK: `OrbitSdk`, `OrbitClient`, bridges, secure stores |
 | `client/` | Implemented (stage 0) | Shared Compose UI and state holders |
 | `apps/desktop/`, `apps/android/` | Implemented (stage 0) | JVM desktop and Android entry points |
-| `apps/ios/` | Planned | Xcode host for the `OrbitClient` framework |
+| `apps/ios/` | Implemented, not run on a device | XcodeGen host showing `MainViewController()` from the `OrbitClient` framework |
 | `tools/` | Existing | C ABI smoke test; Holepunch reference inventory |
 | `docs/` | Existing | Architecture, review, ADR, reference map, and implementation plan |
 | `services/orbit-node/` | Planned | Headless infrastructure introduced with offline delivery |
@@ -103,6 +103,11 @@ cargo test --workspace                 # Rust core and FFI
 ./gradlew :apps:android:assembleDebug  # builds liborbit_ffi.so via cargo-ndk
 tools/ffi-smoke/run.sh                 # C header + static library
 ```
+
+iOS (macOS with Xcode): `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`,
+`brew install xcodegen`, then `cd apps/ios && xcodegen generate` and open
+`Orbit.xcodeproj`; the build phase compiles the Kotlin framework and the Rust
+static library.
 
 On Linux the desktop app needs a running Secret Service (GNOME Keyring or
 KWallet). `ORBIT_PROFILE=name` starts an isolated profile with its own data

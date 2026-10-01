@@ -86,3 +86,11 @@ jobs:
           java-version: 21
       - uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew :client:linkDebugFrameworkIosSimulatorArm64 :client:compileKotlinIosArm64 --console=plain
+      - name: Xcode host app (simulator build)
+        run: |
+          brew install xcodegen
+          cd apps/ios
+          xcodegen generate
+          xcodebuild -project Orbit.xcodeproj -scheme Orbit -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
