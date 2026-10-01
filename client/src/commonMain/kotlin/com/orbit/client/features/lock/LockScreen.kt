@@ -46,7 +46,11 @@ fun LockScreen(state: AppState.Locked, onUnlock: (String) -> Unit) {
             passcode = ""
         }
     }
-    LaunchedEffect(Unit) { focus.requestFocus() }
+    // The field is disabled while a check runs, which drops focus; return it
+    // after every attempt so the user can type again right away.
+    LaunchedEffect(state.unlocking, state.failedAttempts) {
+        if (!state.unlocking) focus.requestFocus()
+    }
 
     Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
         Column(
