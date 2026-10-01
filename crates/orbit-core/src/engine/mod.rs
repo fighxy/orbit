@@ -8,27 +8,30 @@
 //! * [`Engine::close`] is idempotent, wakes all waiters and returns only after
 //!   the worker has stopped and the storage lock is released.
 
+mod network;
 mod protocol;
 mod queue;
 
+use std::collections::{HashMap, HashSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
 pub use protocol::{Command, CommandResult, Event, RequestId, SequencedEvent};
 use queue::EventQueue;
 
-use crate::domain::{normalize_profile, normalize_text};
+use crate::domain::{ConnectionState, ConversationKind, MessageId, NetworkStatus, normalize_profile, normalize_text};
 use crate::error::{Error, Result};
 use crate::identity::{IdentitySecret, LocalIdentity, PublicIdentity};
 use crate::limits::{EVENT_QUEUE_CAPACITY, MAX_EVENT_BATCH, MAX_IN_FLIGHT_COMMANDS};
 use crate::storage::Store;
+use network::{Network, NetworkEvent};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,7 +69,17 @@ impl Engine {
         let identity = LocalIdentity::from_secret(secret);
         let public = identity.public().clone();
         let store = Store::open(&config.data_dir, &identity)?;
-        drop(identity);
+        let delivery_config = store.delivery_config()?;
+        let network_status = NetworkStatus {
+            node: delivery_config.as_ref().map(|c| c.node.clone()),
+            state: if delivery_config.is_some() {
+                ConnectionState::Connecting
+            } else {
+                ConnectionState::Unconfigured
+            },
+            error: None,
+        };
+        let network = Network::start(&identity, delivery_config)?;
 
         let shared = Arc::new(Shared {
             queue: EventQueue::new(EVENT_QUEUE_CAPACITY),
@@ -76,10 +89,9 @@ impl Engine {
         let (sender, receiver) = sync_channel(MAX_IN_FLIGHT_COMMANDS);
         let worker = {
             let shared = shared.clone();
-            let public = public.clone();
             thread::Builder::new()
                 .name("orbit-engine".into())
-                .spawn(move || run_worker(store, receiver, shared, public))?
+                .spawn(move || run_worker(store, receiver, shared, identity, network, network_status))?
         };
 
         Ok(Self {
@@ -159,43 +171,229 @@ impl Drop for Engine {
     }
 }
 
-fn run_worker(mut store: Store, receiver: Receiver<Job>, shared: Arc<Shared>, identity: PublicIdentity) {
-    while let Ok(job) = receiver.recv() {
+fn run_worker(
+    mut store: Store,
+    receiver: Receiver<Job>,
+    shared: Arc<Shared>,
+    identity: LocalIdentity,
+    network: Network,
+    mut status: NetworkStatus,
+) {
+    let mut registration = None;
+    let mut in_flight = HashSet::<MessageId>::new();
+    let mut retry_at = HashMap::<MessageId, Instant>::new();
+    let mut next_flush = Instant::now();
+    loop {
+        if shared.closed.load(Ordering::Acquire) {
+            break;
+        }
+        while let Ok(event) = network.events.try_recv() {
+            match event {
+                NetworkEvent::Registered {
+                    request_id,
+                    node,
+                    result,
+                } => {
+                    let result = result
+                        .map_err(Error::Network)
+                        .and_then(|()| store.mark_registered(&node));
+                    status = NetworkStatus {
+                        node: Some(node),
+                        state: if result.is_ok() {
+                            ConnectionState::Online
+                        } else {
+                            ConnectionState::Offline
+                        },
+                        error: result.as_ref().err().map(ToString::to_string),
+                    };
+                    shared.queue.push(Event::NetworkChanged {
+                        network: status.clone(),
+                    });
+                    if let Some(id) = request_id {
+                        registration = None;
+                        finish_command(
+                            &shared.queue,
+                            id,
+                            result.map(|()| CommandResult::NodeRegistered {
+                                network: status.clone(),
+                            }),
+                        );
+                    }
+                    next_flush = Instant::now();
+                }
+                NetworkEvent::Status { node, state, error } => {
+                    let updated = NetworkStatus {
+                        node: Some(node),
+                        state,
+                        error: error.map(str::to_owned),
+                    };
+                    if status != updated {
+                        status = updated;
+                        shared.queue.push(Event::NetworkChanged {
+                            network: status.clone(),
+                        });
+                    }
+                }
+                NetworkEvent::Deposited { id, result } => {
+                    in_flight.remove(&id);
+                    match result.and_then(|()| store.deposited(&id).map_err(|_| "could not commit delivery status")) {
+                        Ok(message) => {
+                            retry_at.remove(&id);
+                            if let Some(message) = message {
+                                shared.queue.push(Event::MessageAdded { message });
+                            }
+                        }
+                        Err(error) => {
+                            retry_at.insert(id, Instant::now() + Duration::from_secs(5));
+                            status.error = Some(error.into());
+                            shared.queue.push(Event::NetworkChanged {
+                                network: status.clone(),
+                            });
+                        }
+                    }
+                }
+                NetworkEvent::Incoming { items, decision } => {
+                    let mut ids = Vec::new();
+                    let mut failed = false;
+                    for item in items {
+                        let outcome = store.receive_item(&identity, &item, now_ms());
+                        match outcome {
+                            Ok(changes) => {
+                                for message in changes.messages {
+                                    shared.queue.push(Event::MessageAdded { message });
+                                }
+                                if changes.contacts_changed {
+                                    shared.queue.push(Event::ContactsChanged);
+                                }
+                                ids.push(item.id);
+                            }
+                            Err(Error::InvalidArgument(_) | Error::InvalidInvite(_) | Error::NotFound(_)) => {
+                                // Malformed/unauthorized items are durably quarantined,
+                                // so one poison envelope cannot hold up the mailbox.
+                                if store.reject_item(&item.id).is_err() {
+                                    failed = true;
+                                    break;
+                                }
+                                ids.push(item.id);
+                            }
+                            Err(_) => {
+                                failed = true;
+                                break;
+                            }
+                        }
+                    }
+                    let _ = decision.send(if failed { None } else { Some(ids) });
+                    next_flush = Instant::now();
+                }
+            }
+        }
+        if status.state == ConnectionState::Online && Instant::now() >= next_flush {
+            next_flush = Instant::now() + Duration::from_secs(1);
+            match store.outbox(32) {
+                Ok(items) => {
+                    for item in items {
+                        if in_flight.contains(&item.id) || retry_at.get(&item.id).is_some_and(|t| *t > Instant::now()) {
+                            continue;
+                        }
+                        let id = item.id;
+                        if network.deposit(item).is_ok() {
+                            in_flight.insert(id);
+                        }
+                    }
+                }
+                Err(_) => {
+                    status.error = Some("could not read the durable outbox".into());
+                    shared.queue.push(Event::NetworkChanged {
+                        network: status.clone(),
+                    });
+                }
+            }
+        }
+        let job = match receiver.recv_timeout(Duration::from_millis(50)) {
+            Ok(job) => job,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
         if shared.closed.load(Ordering::Acquire) {
             break;
         }
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            execute(&mut store, &shared.queue, &identity, job.command)
+            if let Command::RegisterNode {
+                node,
+                registration_code,
+            } = job.command
+            {
+                if registration.is_some() {
+                    return Err(Error::Busy);
+                }
+                if registration_code.as_ref().is_some_and(|code| code.len() > 1024) {
+                    return Err(Error::InvalidArgument("registration code is too long".into()));
+                }
+                let config = store.configure_delivery(&node)?;
+                network.register(job.request_id, config.clone(), registration_code)?;
+                status = NetworkStatus {
+                    node: Some(config.node),
+                    state: ConnectionState::Connecting,
+                    error: None,
+                };
+                shared.queue.push(Event::NetworkChanged {
+                    network: status.clone(),
+                });
+                registration = Some(job.request_id);
+                Ok(None)
+            } else {
+                execute(&mut store, &shared.queue, &identity, &status, job.command).map(Some)
+            }
         }));
-        let event = match outcome {
-            Ok(Ok(result)) => Event::CommandSucceeded {
-                request_id: job.request_id,
-                result,
-            },
-            Ok(Err(error)) => Event::CommandFailed {
-                request_id: job.request_id,
-                error: error.info(),
-            },
-            Err(_) => Event::CommandFailed {
-                request_id: job.request_id,
-                error: Error::Internal("command handler panicked").info(),
-            },
-        };
-        shared.queue.push(event);
+        match outcome {
+            Ok(Ok(None)) => {}
+            Ok(Ok(Some(result))) => finish_command(&shared.queue, job.request_id, Ok(result)),
+            Ok(Err(error)) => finish_command(&shared.queue, job.request_id, Err(error)),
+            Err(_) => finish_command(
+                &shared.queue,
+                job.request_id,
+                Err(Error::Internal("command handler panicked")),
+            ),
+        }
+        next_flush = Instant::now();
     }
+}
+
+fn finish_command(queue: &EventQueue, request_id: RequestId, result: Result<CommandResult>) {
+    queue.push(match result {
+        Ok(result) => Event::CommandSucceeded { request_id, result },
+        Err(error) => Event::CommandFailed {
+            request_id,
+            error: error.info(),
+        },
+    });
 }
 
 fn execute(
     store: &mut Store,
     queue: &EventQueue,
-    identity: &PublicIdentity,
+    identity: &LocalIdentity,
+    network: &NetworkStatus,
     command: Command,
 ) -> Result<CommandResult> {
     match command {
+        Command::RegisterNode { .. } => Err(Error::Internal("registration must be asynchronous")),
+        Command::CreateInvite => Ok(CommandResult::InviteCreated {
+            text: store.create_invite(identity, now_ms())?,
+        }),
+        Command::InspectInvite { text } => Ok(CommandResult::InviteInspected {
+            preview: store.inspect_invite(&text, now_ms())?,
+        }),
+        Command::AcceptInvite { text } => {
+            let contact = store.accept_invite(identity, &text, now_ms())?;
+            queue.push(Event::ContactsChanged);
+            Ok(CommandResult::ContactAdded { contact })
+        }
         Command::GetSnapshot => Ok(CommandResult::Snapshot {
-            identity: identity.clone(),
+            identity: identity.public().clone(),
             profile: store.profile()?,
             conversations: store.conversations()?,
+            network: network.clone(),
         }),
         Command::ListMessages {
             conversation_id,
@@ -206,7 +404,10 @@ fn execute(
         }),
         Command::SendText { conversation_id, text } => {
             let text = normalize_text(&text)?;
-            let message = store.insert_text(&conversation_id, text, now_ms())?;
+            let message = match store.conversation(&conversation_id)?.kind {
+                ConversationKind::SavedMessages => store.insert_text(&conversation_id, text, now_ms())?,
+                ConversationKind::Direct => store.queue_text(identity, &conversation_id, text, now_ms())?,
+            };
             queue.push(Event::MessageAdded {
                 message: message.clone(),
             });

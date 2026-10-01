@@ -21,6 +21,7 @@ targets:
         UILaunchScreen: {}
         # Compose Multiplatform renders at the display's full refresh rate.
         CADisableMinimumFrameDurationOnPhone: true
+        NSLocalNetworkUsageDescription: "Orbit подключается к выбранному вами узлу для обмена сообщениями."
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft

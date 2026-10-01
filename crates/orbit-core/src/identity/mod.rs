@@ -166,13 +166,9 @@ pub struct LocalIdentity {
     // Kept for signing device certificates and, later, account-level events.
     #[allow(dead_code)]
     account_key: SigningKey,
-    // Device, mailbox and inbox keys are used by the delivery service, which
-    // the engine starts in the next stage.
-    #[allow(dead_code)]
+    // Device, mailbox and inbox keys are used by the mailbox delivery actor.
     device_key: SigningKey,
-    #[allow(dead_code)]
     mailbox_key: SigningKey,
-    #[allow(dead_code)]
     inbox: InboxKey,
     storage_key: Zeroizing<[u8; 32]>,
     public: PublicIdentity,
@@ -214,19 +210,16 @@ impl LocalIdentity {
     }
 
     /// Signs envelopes and invitations.
-    #[allow(dead_code)]
     pub(crate) fn device_key(&self) -> &SigningKey {
         &self.device_key
     }
 
     /// Owns this device's mailbox on the node.
-    #[allow(dead_code)]
     pub(crate) fn mailbox_key(&self) -> &SigningKey {
         &self.mailbox_key
     }
 
     /// Decrypts envelopes addressed to this device.
-    #[allow(dead_code)]
     pub(crate) fn inbox(&self) -> &InboxKey {
         &self.inbox
     }

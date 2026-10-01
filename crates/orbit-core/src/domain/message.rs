@@ -9,18 +9,21 @@ use crate::limits::MAX_TEXT_BYTES;
 pub enum ConversationKind {
     /// Notes the account keeps for itself; never leaves the device yet.
     SavedMessages,
+    Direct,
 }
 
 impl ConversationKind {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             ConversationKind::SavedMessages => "saved_messages",
+            ConversationKind::Direct => "direct",
         }
     }
 
     pub(crate) fn parse(value: &str) -> Result<Self> {
         match value {
             "saved_messages" => Ok(ConversationKind::SavedMessages),
+            "direct" => Ok(ConversationKind::Direct),
             _ => Err(Error::Corrupted("unknown conversation kind")),
         }
     }
@@ -32,6 +35,7 @@ pub struct Conversation {
     pub kind: ConversationKind,
     pub created_at_ms: i64,
     pub last_message: Option<Message>,
+    pub contact: Option<super::Contact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,18 +51,30 @@ pub enum MessageBody {
 pub enum MessageState {
     /// Durably committed to local storage. Nothing was sent to the network.
     SavedLocally,
+    Queued,
+    Mailbox,
+    Delivered,
+    Received,
 }
 
 impl MessageState {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             MessageState::SavedLocally => "saved_locally",
+            MessageState::Queued => "queued",
+            MessageState::Mailbox => "mailbox",
+            MessageState::Delivered => "delivered",
+            MessageState::Received => "received",
         }
     }
 
     pub(crate) fn parse(value: &str) -> Result<Self> {
         match value {
             "saved_locally" => Ok(MessageState::SavedLocally),
+            "queued" => Ok(MessageState::Queued),
+            "mailbox" => Ok(MessageState::Mailbox),
+            "delivered" => Ok(MessageState::Delivered),
+            "received" => Ok(MessageState::Received),
             _ => Err(Error::Corrupted("unknown message state")),
         }
     }

@@ -8,6 +8,9 @@ import com.orbit.sdk.bridge.WireEvent
 import com.orbit.sdk.bridge.WireResult
 import com.orbit.sdk.bridge.decodeBatch
 import com.orbit.sdk.bridge.toJsonBytes
+import com.orbit.sdk.model.Contact
+import com.orbit.sdk.model.InvitePreview
+import com.orbit.sdk.model.NetworkStatus
 import com.orbit.sdk.model.ConversationId
 import com.orbit.sdk.model.Message
 import com.orbit.sdk.model.MessagePage
@@ -33,6 +36,9 @@ import kotlinx.coroutines.withContext
 
 /** Notifications from the engine that are not answers to a call. */
 sealed interface OrbitEvent {
+    data object ContactsChanged : OrbitEvent
+    data class NetworkChanged(val network: NetworkStatus) : OrbitEvent
+
     /** A message became durable locally. Upsert by [Message.id]. */
     data class MessageAdded(val message: Message) : OrbitEvent
 
@@ -80,8 +86,19 @@ class OrbitClient internal constructor(
 
     suspend fun snapshot(): Snapshot {
         val result = call(WireCommand.GetSnapshot) as WireResult.Snapshot
-        return Snapshot(result.identity, result.profile, result.conversations)
+        return Snapshot(result.identity, result.profile, result.conversations, result.network)
     }
+
+    suspend fun registerNode(node: String, registrationCode: String? = null): NetworkStatus =
+        (call(WireCommand.RegisterNode(node, registrationCode)) as WireResult.NodeRegistered).network
+
+    suspend fun createInvite(): String = (call(WireCommand.CreateInvite) as WireResult.InviteCreated).text
+
+    suspend fun inspectInvite(text: String): InvitePreview =
+        (call(WireCommand.InspectInvite(text)) as WireResult.InviteInspected).preview
+
+    suspend fun acceptInvite(text: String): Contact =
+        (call(WireCommand.AcceptInvite(text)) as WireResult.ContactAdded).contact
 
     /** Messages older than [beforeSeq] (newest when null), oldest first. */
     suspend fun messages(conversationId: ConversationId, beforeSeq: Long? = null, limit: Int = 50): MessagePage {
@@ -155,6 +172,8 @@ class OrbitClient internal constructor(
 
     private suspend fun dispatch(event: WireEvent) {
         when (event) {
+            WireEvent.ContactsChanged -> mutableEvents.emit(OrbitEvent.ContactsChanged)
+            is WireEvent.NetworkChanged -> mutableEvents.emit(OrbitEvent.NetworkChanged(event.network))
             is WireEvent.CommandSucceeded -> lock.withLock { pending.remove(event.requestId) }?.complete(event.result)
             is WireEvent.CommandFailed -> lock.withLock { pending.remove(event.requestId) }
                 ?.completeExceptionally(OrbitException(OrbitErrorCode.of(event.error.code), event.error.message))

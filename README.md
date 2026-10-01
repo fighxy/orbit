@@ -24,15 +24,22 @@ messenger client on the Rust core.
 | C ABI (generated `orbit.h`) and JNI; Kotlin SDK over both | C smoke test, JVM integration tests |
 | Compose UI: onboarding (profile, passcode), lock screen, chat list, "Saved messages" chat with history paging, settings | Desktop run under Xvfb; Android debug APK build |
 
-Backend: `orbit-node` runs a store-and-forward mailbox over QUIC (Iroh) with owner
-authentication, deposit tokens, TTL and quotas; verified by end-to-end tests over
-localhost and by running the node and `orbit-cli` as separate processes. Clients are
-not connected to it yet.
+The vertical slice adds registration on a selected `orbit-node`, verified
+`orbit://invite/…` contact exchange, and encrypted one-to-one text messaging in
+the common Windows/Android/iOS UI. The core persists contacts and routing secrets
+under the local device key, saves message history and its ciphertext outbox in
+one transaction, retries the same envelope, receives through long-poll and ACKs
+only after a durable local commit. Delivery states distinguish queued, stored
+on the node and stored by the recipient.
 
-Not implemented yet: client networking, contacts and invitations, E2EE between
-devices, groups, channels, voice, attachments, backup and restore. The app does
-not request network access. The iOS bridge, Keychain store and Xcode host build in CI
-on macOS but have not run on a simulator or device yet.
+The interim HPKE scheme has **no forward secrecy**: compromise of a device inbox
+key exposes previously recorded envelopes addressed to it. MLS/ratcheting,
+groups, channels, voice, attachments, backup, push and background delivery remain
+outside this slice. `orbit-node` is a separate program; clients initiate outgoing
+connections and do not host a mailbox. Device runs on Windows/Android/iOS are
+still acceptance steps; successful builds alone do not verify OS lifecycle.
+
+See [vertical-slice setup and acceptance](docs/vertical-slice.md).
 
 ## Planned architecture
 
@@ -90,7 +97,7 @@ and media E2EE are separate integration requirements.
 | `client/` | Implemented (stage 0) | Shared Compose UI and state holders |
 | `apps/desktop/`, `apps/android/` | Implemented (stage 0) | JVM desktop and Android entry points |
 | `apps/ios/` | Implemented, not run on a device | XcodeGen host showing `MainViewController()` from the `OrbitClient` framework |
-| `crates/orbit-protocol/`, `crates/orbit-transport/` | Implemented (mailbox) | Wire protocol types; QUIC client over Iroh |
+| `crates/orbit-protocol/`, `crates/orbit-transport/` | Implemented (mailbox and envelopes) | Wire protocol types; QUIC client over Iroh |
 | `services/orbit-node/` | Implemented (mailbox) | Node: store-and-forward mailbox with TTL, quotas, owner auth, deposit tokens |
 | `crates/orbit-cli/` | Implemented | Test tool for a node mailbox (no E2EE; test data only) |
 | `deploy/orbit-node/` | Implemented, not run on a VPS | Dockerfile, hardened systemd unit, deployment notes |
@@ -126,8 +133,8 @@ CI builds a per-user MSI on `windows-latest` and attaches it to the run as the
   SmartScreen warns on first launch.
 - The account secret is stored in Windows Credential Manager (service
   `com.orbit.messenger`); data lives in `%LOCALAPPDATA%\Orbit\<profile>`.
-- Only the local "Saved messages" chat works in the client so far; connecting
-  it to `orbit-node` comes with end-to-end encryption.
+- Open Contacts to register on a reachable node, exchange invitations and send
+  encrypted text messages. Local "Saved messages" remains available offline.
 
 iOS (macOS with Xcode): `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`,
 `brew install xcodegen`, then `cd apps/ios && xcodegen generate` and open
@@ -161,7 +168,7 @@ The detailed planning and review documents are in Russian.
 
 - [Documentation index](docs/README.md)
 - [Rust/KMP architecture, revision 2](docs/architecture/rust-kmp.md)
-- [Rust ↔ KMP bridge, ABI v2](docs/architecture/kmp-bridge.md)
+- [Rust ↔ KMP bridge, ABI v3](docs/architecture/kmp-bridge.md)
 - [Architecture review and existing scaffold findings](docs/reviews/2026-10-01-architecture-review.md)
 - [Implementation roadmap and acceptance gates](docs/roadmap.md)
 - [ADR 0001: Rust core, KMP clients, independent protocol](docs/adr/0001-rust-core-kmp-clients.md)

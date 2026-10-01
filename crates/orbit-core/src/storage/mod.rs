@@ -6,7 +6,9 @@
 //! independent sources of the same messages.
 
 mod cipher;
+mod delivery;
 mod schema;
+pub(crate) use delivery::{DeliveryConfig, OutboxItem};
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
@@ -113,6 +115,7 @@ impl Store {
                 kind: ConversationKind::parse(&kind)?,
                 created_at_ms,
                 last_message: self.last_message(&id)?,
+                contact: self.contact(&id)?,
             });
         }
         // Most recently active first; empty conversations keep creation order.
@@ -328,5 +331,7 @@ fn create_private_dir(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod delivery_tests;
 #[cfg(test)]
 mod tests;

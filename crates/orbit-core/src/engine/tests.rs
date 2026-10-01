@@ -70,6 +70,7 @@ fn snapshot_contains_identity_and_saved_messages() {
             identity,
             profile,
             conversations,
+            ..
         } => {
             assert_eq!(profile, None);
             assert_eq!(&identity, engine.identity());

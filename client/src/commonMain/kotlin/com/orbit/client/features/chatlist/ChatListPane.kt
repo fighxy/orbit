@@ -24,6 +24,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +49,7 @@ fun ChatListPane(
     banner: String?,
     onSelect: (ConversationId) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenContacts: () -> Unit,
     onDismissBanner: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -87,6 +89,7 @@ fun ChatListPane(
                 )
             }
         }
+        TextButton(onClick = onOpenContacts, modifier = Modifier.fillMaxWidth()) { Text(Strings.contacts) }
         HorizontalDivider()
         LazyColumn(Modifier.weight(1f)) {
             items(conversations, key = { it.id.hex }) { conversation ->
@@ -161,6 +164,7 @@ private fun ConversationRow(conversation: Conversation, selected: Boolean, onCli
 
 fun Conversation.title(): String = when (kind) {
     ConversationKind.SavedMessages -> Strings.savedMessages
+    ConversationKind.Direct -> contact?.displayName ?: Strings.contact
 }
 
 private fun Conversation.preview(): String = when (val body = lastMessage?.body) {

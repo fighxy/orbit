@@ -7,7 +7,7 @@ use crate::domain::{ConversationId, ConversationKind};
 use crate::error::{Error, Result};
 use crate::identity::PublicIdentity;
 
-pub(super) const CURRENT_VERSION: i64 = 2;
+pub(super) const CURRENT_VERSION: i64 = 3;
 
 /// Upgrade steps; entry `n` moves the schema from version `n + 1` to `n + 2`.
 const UPGRADES: &[&str] = &[
@@ -18,6 +18,37 @@ CREATE TABLE profile (
     display_name  TEXT NOT NULL,
     about         TEXT NOT NULL,
     updated_at_ms INTEGER NOT NULL
+) STRICT;
+",
+    // v3: protected routing records, durable ciphertext outbox and inbox dedup.
+    "
+CREATE TABLE delivery_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    nonce BLOB NOT NULL,
+    ciphertext BLOB NOT NULL
+) STRICT;
+CREATE TABLE contacts (
+    conversation_id BLOB PRIMARY KEY REFERENCES conversations(id),
+    device_id BLOB NOT NULL UNIQUE CHECK (length(device_id) = 32),
+    nonce BLOB NOT NULL,
+    ciphertext BLOB NOT NULL,
+    ready INTEGER NOT NULL CHECK (ready IN (0, 1))
+) STRICT;
+CREATE TABLE invitations (
+    id BLOB PRIMARY KEY CHECK (length(id) = 16),
+    expires_at_ms INTEGER NOT NULL
+) STRICT;
+CREATE TABLE outbox (
+    id BLOB PRIMARY KEY CHECK (length(id) = 16),
+    conversation_id BLOB NOT NULL REFERENCES conversations(id),
+    message_id BLOB REFERENCES messages(id),
+    envelope BLOB NOT NULL,
+    route_nonce BLOB NOT NULL,
+    route_ciphertext BLOB NOT NULL
+) STRICT;
+CREATE TABLE processed_inbox (
+    id BLOB PRIMARY KEY CHECK (length(id) = 32),
+    accepted INTEGER NOT NULL CHECK (accepted IN (0, 1))
 ) STRICT;
 ",
 ];

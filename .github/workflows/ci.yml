@@ -69,6 +69,11 @@ jobs:
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "$ANDROID_PLATFORM" "ndk;$NDK_VERSION" > /dev/null
       - uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew :apps:android:assembleDebug --console=plain
+      - uses: actions/upload-artifact@v7
+        with:
+          name: orbit-android-debug-apk
+          path: apps/android/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
 
   ios:
     name: iOS framework (simulator)
@@ -93,7 +98,14 @@ jobs:
           xcodegen generate
           xcodebuild -project Orbit.xcodeproj -scheme Orbit -configuration Debug \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO build
+            -derivedDataPath "$RUNNER_TEMP/orbit-ios-build" CODE_SIGNING_ALLOWED=NO build
+      - name: Package iOS simulator app
+        run: ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/orbit-ios-build/Build/Products/Debug-iphonesimulator/Orbit.app" orbit-ios-simulator.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: orbit-ios-simulator-app
+          path: orbit-ios-simulator.zip
+          if-no-files-found: error
 
   node-image:
     name: orbit-node Docker image

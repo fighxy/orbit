@@ -1,5 +1,8 @@
 package com.orbit.sdk.bridge
 
+import com.orbit.sdk.model.Contact
+import com.orbit.sdk.model.InvitePreview
+import com.orbit.sdk.model.NetworkStatus
 import com.orbit.sdk.model.Conversation
 import com.orbit.sdk.model.ConversationId
 import com.orbit.sdk.model.Message
@@ -22,6 +25,12 @@ internal val ProtocolJson = Json {
 
 @Serializable
 internal sealed interface WireCommand {
+    @Serializable @SerialName("register_node")
+    data class RegisterNode(val node: String, @SerialName("registration_code") val registrationCode: String? = null) : WireCommand
+    @Serializable @SerialName("create_invite") data object CreateInvite : WireCommand
+    @Serializable @SerialName("inspect_invite") data class InspectInvite(val text: String) : WireCommand
+    @Serializable @SerialName("accept_invite") data class AcceptInvite(val text: String) : WireCommand
+
     @Serializable
     @SerialName("get_snapshot")
     data object GetSnapshot : WireCommand
@@ -51,12 +60,18 @@ internal sealed interface WireCommand {
 
 @Serializable
 internal sealed interface WireResult {
+    @Serializable @SerialName("node_registered") data class NodeRegistered(val network: NetworkStatus) : WireResult
+    @Serializable @SerialName("invite_created") data class InviteCreated(val text: String) : WireResult
+    @Serializable @SerialName("invite_inspected") data class InviteInspected(val preview: InvitePreview) : WireResult
+    @Serializable @SerialName("contact_added") data class ContactAdded(val contact: Contact) : WireResult
+
     @Serializable
     @SerialName("snapshot")
     data class Snapshot(
         val identity: PublicIdentity,
         val profile: Profile? = null,
         val conversations: List<Conversation>,
+        val network: NetworkStatus = NetworkStatus(),
     ) : WireResult
 
     @Serializable
@@ -77,6 +92,9 @@ internal data class WireError(val code: String, val message: String)
 
 @Serializable
 internal sealed interface WireEvent {
+    @Serializable @SerialName("contacts_changed") data object ContactsChanged : WireEvent
+    @Serializable @SerialName("network_changed") data class NetworkChanged(val network: NetworkStatus) : WireEvent
+
     @Serializable
     @SerialName("command_succeeded")
     data class CommandSucceeded(@SerialName("request_id") val requestId: Long, val result: WireResult) : WireEvent

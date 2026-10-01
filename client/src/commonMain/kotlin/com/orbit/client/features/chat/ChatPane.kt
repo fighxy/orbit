@@ -27,7 +27,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -73,6 +72,7 @@ import com.orbit.sdk.model.Conversation
 import com.orbit.sdk.model.ConversationKind
 import com.orbit.sdk.model.MessageBody
 import com.orbit.sdk.model.MessageState
+import com.orbit.sdk.model.DeviceId
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -85,6 +85,7 @@ fun ChatPane(
     state: ChatState,
     conversation: Conversation?,
     sendShortcut: SendShortcut,
+    ownDevice: DeviceId?,
     onSend: (String) -> Unit,
     onLoadOlder: () -> Unit,
     onDismissError: () -> Unit,
@@ -117,7 +118,7 @@ fun ChatPane(
             when {
                 state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 state.messages.isEmpty() -> EmptyChat(Modifier.align(Alignment.Center))
-                else -> MessageList(state, onLoadOlder)
+                else -> MessageList(state, ownDevice, onLoadOlder)
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -140,6 +141,9 @@ private fun ChatHeader(conversation: Conversation, onBack: (() -> Unit)?) {
         }
         Column {
             Text(conversation.title(), style = MaterialTheme.typography.titleMedium)
+            if (conversation.contact?.ready == false) {
+                Text(Strings.contactPending, style = MaterialTheme.typography.bodySmall)
+            }
             if (conversation.kind == ConversationKind.SavedMessages) {
                 Text(
                     Strings.savedMessagesSubtitle,
@@ -169,7 +173,7 @@ private fun EmptyChat(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun MessageList(state: ChatState, onLoadOlder: () -> Unit) {
+private fun MessageList(state: ChatState, ownDevice: DeviceId?, onLoadOlder: () -> Unit) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     // reverseLayout: index 0 is the newest row at the bottom.
@@ -206,7 +210,7 @@ private fun MessageList(state: ChatState, onLoadOlder: () -> Unit) {
             items(rows, key = { it.key }) { row ->
                 when (row) {
                     is TimelineItem.Day -> DaySeparator(row.label)
-                    is TimelineItem.Entry -> MessageBubble(row)
+                    is TimelineItem.Entry -> MessageBubble(row, row.message.authorDevice == ownDevice)
                 }
             }
             if (state.loadingOlder) {
@@ -255,22 +259,22 @@ private fun DaySeparator(label: String) {
 }
 
 @Composable
-private fun MessageBubble(entry: TimelineItem.Entry) {
+private fun MessageBubble(entry: TimelineItem.Entry, own: Boolean) {
     val message = entry.message
     // Own messages sit on the right. Corners facing a neighbour in the same
     // group are tight; the group's last bubble gets the sharpest "tail" corner.
     val shape = RoundedCornerShape(
-        topStart = 18.dp,
-        topEnd = if (entry.firstInGroup) 18.dp else 6.dp,
-        bottomStart = 18.dp,
-        bottomEnd = if (entry.lastInGroup) 4.dp else 6.dp,
+        topStart = if (own || entry.firstInGroup) 18.dp else 6.dp,
+        topEnd = if (!own || entry.firstInGroup) 18.dp else 6.dp,
+        bottomStart = if (own) 18.dp else if (entry.lastInGroup) 4.dp else 6.dp,
+        bottomEnd = if (!own) 18.dp else if (entry.lastInGroup) 4.dp else 6.dp,
     )
     Box(
         Modifier.fillMaxWidth().padding(top = if (entry.firstInGroup) 6.dp else 2.dp),
-        contentAlignment = Alignment.CenterEnd,
+        contentAlignment = if (own) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
         Surface(
-            color = MaterialTheme.colorScheme.primaryContainer,
+            color = if (own) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
             shape = shape,
             modifier = Modifier.widthIn(max = 560.dp),
         ) {
@@ -280,7 +284,7 @@ private fun MessageBubble(entry: TimelineItem.Entry) {
                         Text(
                             body.text,
                             style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            color = if (own) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                         )
                     }
                 }
@@ -292,16 +296,15 @@ private fun MessageBubble(entry: TimelineItem.Entry) {
                     Text(
                         formatClockTime(message.createdAtMs),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f),
+                        color = (if (own) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.65f),
                     )
-                    when (message.state) {
-                        MessageState.SavedLocally -> Icon(
-                            Icons.Filled.Check,
-                            contentDescription = Strings.savedLocally,
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.65f),
-                        )
-                    }
+                    if (own) Text(when (message.state) {
+                        MessageState.SavedLocally -> Strings.savedLocally
+                        MessageState.Queued -> Strings.messageQueued
+                        MessageState.Mailbox -> Strings.messageOnServer
+                        MessageState.Delivered -> Strings.messageDelivered
+                        MessageState.Received -> ""
+                    }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

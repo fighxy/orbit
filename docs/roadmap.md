@@ -15,7 +15,7 @@
 - [x] Разделить JVM desktop и Kotlin/Native source sets; убрать Java API из Native target graph. _Native desktop targets удалены; общий `jniMain` для Android и JVM._
 - [x] Создать минимальные `crates/orbit-core/` и `crates/orbit-ffi/`.
 - [x] Сделать KMP `NativeEngine` с Android/JVM JNI и iOS cinterop. _iOS: компиляция в CI, запуск на устройстве не проверен._
-- [x] Добавить минимальный Compose экран и платформенные entry points. _Desktop и Android; Xcode host для iOS ещё нет._
+- [x] Добавить минимальный Compose экран и платформенные entry points. _Desktop и Android; Xcode host добавлен; запуска на устройстве ещё нет._
 - [x] Разделить публичные identity DTO и секреты; убрать seed из sender/member models.
 - [x] Заменить Base64 key storage и TODO реальными secure-store adapters; исключить молчаливое plaintext fallback. _Плюс необязательный код-пароль (Argon2id) поверх хранилища ОС._
 - [x] Заменить хранилище, записывающее только длины payload, реальным storage под управлением Rust.
@@ -28,7 +28,7 @@ round-trip после restart. Подключены smoke сборки оста�
 Состояние критерия: desktop (Linux) проверен вживую — создание аккаунта, сообщения
 и профиль переживают перезапуск, engine закрывается и освобождает блокировку.
 Android: APK собирается с `liborbit_ffi.so`, запуск на устройстве не проверен.
-iOS: фреймворк собирается в CI, нужен Xcode host и запуск на симуляторе.
+iOS: фреймворк собирается в CI, Xcode host собирается в CI; нужен запуск на симуляторе и устройстве.
 
 ## 1. Ранние эксперименты архитектуры
 
@@ -51,7 +51,7 @@ iOS: фреймворк собирается в CI, нужен Xcode host и з�
 - [ ] Транзакционная запись crypto state, окончательного ciphertext и outbox.
 - [ ] Dedup, retry того же envelope, durable получение и корректные ACK.
 - [ ] Логические streams по scope/device, авторизация доступа к scope.
-- [x] Mailbox с ciphertext, capability, TTL и квотами. _`services/orbit-node`, протокол `orbit/mailbox/1`; клиенты ещё не подключены, E2EE конвертов не реализовано._
+- [x] Mailbox с ciphertext, capability, TTL и квотами. _`services/orbit-node`, протокол `orbit/mailbox/1`; Клиенты подключены в вертикальном срезе; временная HPKE-схема без forward secrecy. MLS остаётся отдельным экспериментом._
 - [ ] Различимые статусы: локальная очередь, сохранение mailbox, получение адресатом.
 
 Критерий: сообщение проходит между двумя устройствами через direct/relay и
@@ -132,3 +132,13 @@ delivery. Испытания и защиты не откладываются ц�
 Критерий: замена проходит тот же набор клиентских сценариев и даёт конкретное
 преимущество. Количество перенесённых пакетов Holepunch не является метрикой
 готовности мессенджера.
+
+## Текущий вертикальный срез личной переписки
+
+Регистрация mailbox, проверяемые приглашения, взаимный обмен контактами,
+защищённое хранение контактов, durable outbox, HPKE-конверты, dedup, ACK после
+commit и квитанции доставки реализованы в `feat/vertical-chat` поверх
+`feat/stage-0-rust-core-kmp`. Общий UI используется на Windows, Android и iOS.
+[Проверка и границы](vertical-slice.md). Полный критерий этапа 2 остаётся открытым:
+нет direct/relay P2P и MLS; реальные мобильные lifecycle и трёхплатформенный
+обмен нужно подтвердить на устройствах. Push/background delivery не реализованы.

@@ -235,7 +235,7 @@ fn version_1_database_is_upgraded_in_place() {
         // Reproduce a database written by schema version 1.
         let db = Store::account_dir(dir.path(), &identity.public().account_id).join(DATABASE_FILE);
         let conn = Connection::open(db).unwrap();
-        conn.execute_batch("DROP TABLE profile; PRAGMA user_version = 1;")
+        conn.execute_batch("DROP TABLE profile; DROP TABLE delivery_config; DROP TABLE contacts; DROP TABLE invitations; DROP TABLE outbox; DROP TABLE processed_inbox; PRAGMA user_version = 1;")
             .unwrap();
     }
     let mut store = Store::open(dir.path(), &identity).unwrap();

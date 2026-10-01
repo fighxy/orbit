@@ -204,6 +204,8 @@ mod tests {
                 Event::MessageAdded { .. } => "message",
                 Event::ProfileChanged { .. } => "profile",
                 Event::CommandSucceeded { .. } => "ok",
+                Event::ContactsChanged => "contacts",
+                Event::NetworkChanged { .. } => "network",
             })
             .collect();
         assert_eq!(kinds, vec!["result", "resync", "message"]);

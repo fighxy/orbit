@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{Conversation, ConversationId, Message, Profile};
+use crate::domain::{Contact, Conversation, ConversationId, InvitePreview, Message, NetworkStatus, Profile};
 use crate::error::ErrorInfo;
 use crate::identity::PublicIdentity;
 use crate::storage::MessagePage;
@@ -17,6 +17,18 @@ pub type RequestId = u64;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    RegisterNode {
+        node: String,
+        #[serde(default)]
+        registration_code: Option<String>,
+    },
+    CreateInvite,
+    InspectInvite {
+        text: String,
+    },
+    AcceptInvite {
+        text: String,
+    },
     /// Public identity and conversation list. Clients request it after start
     /// and after `resync_required`.
     GetSnapshot,
@@ -49,6 +61,19 @@ pub enum CommandResult {
         /// `None` until the user sets a profile.
         profile: Option<Profile>,
         conversations: Vec<Conversation>,
+        network: NetworkStatus,
+    },
+    NodeRegistered {
+        network: NetworkStatus,
+    },
+    InviteCreated {
+        text: String,
+    },
+    InviteInspected {
+        preview: InvitePreview,
+    },
+    ContactAdded {
+        contact: Contact,
     },
     Messages {
         page: MessagePage,
@@ -80,6 +105,10 @@ pub enum Event {
     ProfileChanged {
         profile: Profile,
     },
+    ContactsChanged,
+    NetworkChanged {
+        network: NetworkStatus,
+    },
     /// Events were dropped because the client did not read them in time.
     /// The client must request a new snapshot and reload visible history.
     ResyncRequired,
@@ -89,7 +118,13 @@ impl Event {
     /// Results are never dropped; their number is bounded by in-flight
     /// commands. Notifications can be recovered through a snapshot.
     pub(crate) fn is_droppable(&self) -> bool {
-        matches!(self, Event::MessageAdded { .. } | Event::ProfileChanged { .. })
+        matches!(
+            self,
+            Event::MessageAdded { .. }
+                | Event::ProfileChanged { .. }
+                | Event::ContactsChanged
+                | Event::NetworkChanged { .. }
+        )
     }
 
     pub(crate) fn is_command_result(&self) -> bool {

@@ -12,6 +12,24 @@ import kotlin.test.assertNull
 /** Golden JSON emitted by orbit-core; keeps the Kotlin mirror of the protocol honest. */
 class ProtocolTest {
     @Test
+    fun networkCommandsAndNotificationsMatchCoreContract() {
+        assertEquals("""{"type":"register_node","node":"node","registration_code":"code"}""",
+            WireCommand.RegisterNode("node", "code").toJsonBytes().decodeToString())
+        assertEquals("""{"type":"accept_invite","text":"orbit://invite/test"}""",
+            WireCommand.AcceptInvite("orbit://invite/test").toJsonBytes().decodeToString())
+        val batch = decodeBatch("""{"events":[
+            {"seq":1,"event":{"type":"network_changed","network":{"node":"n","state":"online","error":null}}},
+            {"seq":2,"event":{"type":"contacts_changed"}},
+            {"seq":3,"event":{"type":"command_succeeded","request_id":1,"result":{"type":"invite_inspected","preview":{"account_id":"${"01".repeat(32)}","device_id":"${"02".repeat(32)}","display_name":"Алиса","expires_at_ms":50}}}}
+        ]}""".encodeToByteArray())
+        assertEquals(com.orbit.sdk.model.ConnectionState.Online, assertIs<WireEvent.NetworkChanged>(batch.events[0].event).network.state)
+        assertEquals(WireEvent.ContactsChanged, batch.events[1].event)
+        val result = assertIs<WireResult.InviteInspected>(assertIs<WireEvent.CommandSucceeded>(batch.events[2].event).result)
+        assertEquals("Алиса", result.preview.displayName)
+        assertEquals(OrbitErrorCode.InvalidInvite, OrbitErrorCode.of("invalid_invite"))
+        assertEquals(18, OrbitErrorCode.Network.value)
+    }
+    @Test
     fun commandsEncodeLikeRust() {
         val id = ConversationId("11".repeat(16))
         assertEquals("""{"type":"get_snapshot"}""", WireCommand.GetSnapshot.toJsonBytes().decodeToString())

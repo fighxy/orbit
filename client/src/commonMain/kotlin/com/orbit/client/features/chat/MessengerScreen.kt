@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import com.orbit.client.app.PreferencesRepository
 import com.orbit.client.app.ShellNavigation
 import com.orbit.client.features.chatlist.ChatListPane
+import com.orbit.client.features.contacts.ContactsScreen
 import com.orbit.client.features.settings.SecurityActions
 import com.orbit.client.features.settings.SettingsScreen
 
@@ -26,6 +27,10 @@ fun MessengerScreen(
     preferences: PreferencesRepository,
     navigation: ShellNavigation,
 ) {
+    if (navigation.contactsOpen) {
+        ContactsScreen(session, onBack = { navigation.contactsOpen = false }, onContactAdded = { navigation.contactsOpen = false })
+        return
+    }
     if (navigation.settingsOpen) {
         SettingsScreen(session, security, preferences, onBack = { navigation.settingsOpen = false })
         return
@@ -53,6 +58,7 @@ fun MessengerScreen(
                     banner = banner,
                     onSelect = session::select,
                     onOpenSettings = { navigation.settingsOpen = true },
+                    onOpenContacts = { navigation.contactsOpen = true },
                     onDismissBanner = session::dismissBanner,
                     modifier = Modifier.width(320.dp).fillMaxHeight(),
                 )
@@ -61,6 +67,7 @@ fun MessengerScreen(
                     state = chat,
                     conversation = conversations.firstOrNull { it.id == chat.conversationId },
                     sendShortcut = prefs.sendShortcut,
+                    ownDevice = identity?.deviceId,
                     onSend = session::send,
                     onLoadOlder = session::loadOlder,
                     onDismissError = session::dismissError,
@@ -77,6 +84,7 @@ fun MessengerScreen(
                 banner = banner,
                 onSelect = session::select,
                 onOpenSettings = { navigation.settingsOpen = true },
+                onOpenContacts = { navigation.contactsOpen = true },
                 onDismissBanner = session::dismissBanner,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -85,6 +93,7 @@ fun MessengerScreen(
                 state = chat,
                 conversation = conversations.firstOrNull { it.id == chat.conversationId },
                 sendShortcut = prefs.sendShortcut,
+                ownDevice = identity?.deviceId,
                 onSend = session::send,
                 onLoadOlder = session::loadOlder,
                 onDismissError = session::dismissError,

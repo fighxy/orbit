@@ -29,6 +29,10 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 
 private class FakeBackend : ChatBackend {
+    override suspend fun registerNode(node: String, registrationCode: String?): com.orbit.sdk.model.NetworkStatus = error("unused")
+    override suspend fun createInvite(): String = error("unused")
+    override suspend fun inspectInvite(text: String): com.orbit.sdk.model.InvitePreview = error("unused")
+    override suspend fun acceptInvite(text: String): com.orbit.sdk.model.Contact = error("unused")
     var profile: Profile? = null
     var closed = false
     override val events: Flow<OrbitEvent> = MutableSharedFlow()

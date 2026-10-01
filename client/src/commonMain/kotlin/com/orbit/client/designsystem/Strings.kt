@@ -13,17 +13,14 @@ object Strings {
         "Аккаунт создаётся на этом устройстве: без телефона и почты. " +
             "Ключ аккаунта хранится в защищённом хранилище системы, " +
             "а сообщения на диске зашифрованы ключом устройства."
-    const val onboardingLimits =
-        "Сейчас доступны локальные заметки. Переписка между устройствами, " +
-            "резервная копия ключа и восстановление появятся на следующих этапах."
+    const val onboardingLimits = "После создания аккаунта откройте «Контакты», подключитесь к узлу и обменяйтесь приглашениями. Резервное копирование и восстановление пока недоступны."
     const val start = "Начать"
     const val next = "Далее"
     const val createAccount = "Создать аккаунт"
     const val creatingAccount = "Создаём ключи…"
 
     const val profileStepTitle = "Как вас называть?"
-    const val profileStepBody =
-        "Имя увидят ваши собеседники, когда появится обмен контактами. Сейчас профиль хранится только на устройстве."
+    const val profileStepBody = "Это имя увидят ваши собеседники в приглашении и списке чатов."
     const val displayName = "Имя"
     const val about = "О себе"
     const val aboutHint = "Необязательно"
@@ -67,6 +64,29 @@ object Strings {
     const val retry = "Повторить"
     const val details = "Подробности"
 
+    const val contacts = "Контакты и подключение"
+    const val contact = "Контакт"
+    const val deliveryServer = "Подключение к узлу"
+    const val deliveryServerHint = "Введите адрес узла, который вы получили от его владельца. Оба собеседника могут пользоваться одним узлом."
+    const val nodeAddress = "Адрес узла"
+    const val registrationCode = "Код регистрации (если нужен)"
+    const val registerOnServer = "Зарегистрироваться / подключиться"
+    const val serverNotConfigured = "Узел ещё не выбран"
+    const val serverConnecting = "Подключаемся…"
+    const val serverConnected = "Подключено"
+    const val serverOffline = "Нет подключения. Повторяем автоматически"
+    const val myInvitation = "Моё приглашение"
+    const val invitationHint = "Передайте приглашение собеседнику. После принятия вы появитесь в контактах друг у друга. Ссылка действует 7 дней."
+    const val createInvitation = "Создать приглашение"
+    const val copyInvitationHint = "Выделите и скопируйте ссылку, затем передайте её собеседнику."
+    const val addContact = "Добавить контакт"
+    const val pasteInvitation = "Вставьте orbit://invite/…"
+    const val verifyInvitation = "Проверить приглашение"
+    const val verifyContactKey = "Сверьте этот ключ с собеседником по знакомому вам каналу связи."
+    const val messageQueued = "В очереди"
+    const val messageOnServer = "На узле"
+    const val messageDelivered = "Доставлено"
+    const val contactPending = "Завершаем обмен контактами…"
     const val chats = "Чаты"
     const val savedMessages = "Избранное"
     const val savedMessagesSubtitle = "Хранится только на этом устройстве"
@@ -118,7 +138,7 @@ object Strings {
     const val aboutSection = "О приложении"
     const val version = "Версия"
     const val storageNote = "Сообщения хранятся на этом устройстве и зашифрованы ключом устройства."
-    const val networkNote = "Сеть на этом этапе не используется: данные никуда не отправляются."
+    const val networkNote = "Личная переписка идёт через выбранный вами узел. В фоне на телефоне доставка может приостанавливаться до открытия приложения."
     const val notReady = "Аккаунт не открыт"
 
     fun describe(error: OrbitException): String = when (error.code) {
@@ -130,6 +150,9 @@ object Strings {
         OrbitErrorCode.UnsupportedStorageVersion -> "Данные созданы более новой версией Orbit. Обновите приложение."
         OrbitErrorCode.InvalidIdentity -> "Сохранённый ключ аккаунта повреждён или имеет неизвестный формат."
         OrbitErrorCode.WrongPasscode -> wrongPasscode
+        OrbitErrorCode.NetworkNotConfigured -> "Сначала зарегистрируйтесь на узле в разделе «Контакты»."
+        OrbitErrorCode.InvalidInvite -> "Приглашение недействительно, просрочено или ключ контакта изменился."
+        OrbitErrorCode.Network -> "Не удалось подключиться к узлу. Проверьте адрес, код регистрации и доступность сервера."
         OrbitErrorCode.Closed -> "Хранилище закрыто."
         OrbitErrorCode.Busy -> "Слишком много операций одновременно. Повторите через мгновение."
         OrbitErrorCode.InvalidArgument -> "Некорректный запрос: ${error.message}"

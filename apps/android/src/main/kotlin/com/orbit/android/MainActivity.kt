@@ -16,7 +16,7 @@ class MainActivity : ComponentActivity() {
         val app = application as OrbitApplication
         setContent {
             val navigation = remember { ShellNavigation() }
-            BackHandler(enabled = navigation.settingsOpen) { navigation.back() }
+            BackHandler(enabled = navigation.settingsOpen || navigation.contactsOpen) { navigation.back() }
             OrbitApp(app.controller, app.preferences, navigation)
         }
     }

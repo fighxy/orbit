@@ -1,4 +1,4 @@
-# Мост Rust ↔ Kotlin Multiplatform (ABI v2)
+# Мост Rust ↔ Kotlin Multiplatform (ABI v3)
 
 Статус: реализовано на этапе 0. Источник истины — `crates/orbit-ffi/src` и
 сгенерированный `crates/orbit-ffi/include/orbit.h`; этот документ объясняет
@@ -40,7 +40,7 @@ secure store, не часть контракта движка.
 
 - **Handle.** Движки адресуются числами `u64`, которые никогда не переиспользуются.
   Обращение к закрытому handle возвращает `closed`, а не обращается к освобождённой памяти.
-- **Ошибки.** `0` — успех, иначе код `ORBIT_ERR_*` (1–15), одинаковый в C, JNI
+- **Ошибки.** `0` — успех, иначе код `ORBIT_ERR_*` (1–18), одинаковый в C, JNI
   (`OrbitNativeException(code, message)`) и JSON (`snake_case`). Panic не пересекает границу.
 - **Память.** У буфера один владелец; `orbit_buffer_free` затирает содержимое.
   Входные указатели могут быть `NULL` только при нулевой длине.
@@ -49,7 +49,7 @@ secure store, не часть контракта движка.
   входных данных: ошибки разбора JSON не цитируют текст команды.
 - **События.** Результат каждой команды приходит ровно одним событием
   `command_succeeded`/`command_failed` и никогда не отбрасывается. Уведомления
-  (`message_added`, `profile_changed`) при переполнении очереди заменяются одним
+  (`message_added`, `profile_changed`, `contacts_changed`, `network_changed`) при переполнении очереди заменяются одним
   `resync_required`; клиент запрашивает snapshot заново.
 - **Корреляция.** `OrbitClient` отправляет команду и регистрирует ожидание под одной
   блокировкой, поэтому результат не может прийти раньше регистрации.
@@ -58,9 +58,13 @@ secure store, не часть контракта движка.
 
 | Команда | Результат | Уведомление |
 |---|---|---|
-| `get_snapshot` | `snapshot { identity, profile, conversations }` | — |
+| `get_snapshot` | `snapshot { identity, profile, conversations, network }` | — |
 | `list_messages { conversation_id, before_seq?, limit }` | `messages { page }` | — |
 | `send_text { conversation_id, text }` | `message_saved { message }` | `message_added` |
+| `register_node { node, registration_code? }` | `node_registered { network }` | `network_changed` |
+| `create_invite` | `invite_created { text }` | — |
+| `inspect_invite { text }` | `invite_inspected { preview }` | — |
+| `accept_invite { text }` | `contact_added { contact }` | `contacts_changed` |
 | `update_profile { display_name, about }` | `profile_updated { profile }` | `profile_changed` |
 
 Rust отклоняет неизвестные поля команд; Kotlin игнорирует неизвестные поля
@@ -92,3 +96,22 @@ salt[16] | nonce[24] | ciphertext`. Ключ — Argon2id (64 МиБ, 3 прох
 - Запуск iOS-моста и Keychain на устройстве или симуляторе (есть только компиляция в CI).
 - Запуск Android-приложения на устройстве (APK собирается).
 - Поведение Keystore/Keychain при блокировке устройства и восстановлении из backup.
+
+## Доставка личных сообщений (ABI v3)
+
+Отдельный сетевой actor держит исходящее QUIC-соединение с mailbox. Получение
+использует `Wait`, а не периодические `Fetch`. Сетевой поток передаёт пачку
+конвертов worker движка и ждёт его решения: `Ack` вызывается только после
+успешного локального commit. Повреждённые/неавторизованные конверты записываются
+как отклонённые до ACK, не блокируя остальные сообщения. Сбой storage ACK не даёт.
+
+`message_added` означает upsert по MessageId: событие также меняет состояние
+существующего сообщения. `queued` — локальная транзакция истории + outbox;
+`mailbox` — узел подтвердил запись; `delivered` — проверенная квитанция адресата;
+`received` — сохранённое входящее сообщение. Это не подтверждение прочтения.
+Контакты, routing capabilities и конфигурация узла зашифрованы на диске.
+
+Перед отправкой текста контакт завершает взаимный обмен подписанными карточками.
+Текст можно поставить в очередь сразу после принятия приглашения; он остаётся
+в outbox до подтверждения обмена. При retry и restart исходный ciphertext не
+меняется. Close отменяет сетевой actor и активный long-poll.
