@@ -24,4 +24,4 @@ mod ops;
 /// Version of the native contract: C functions, JNI methods and the JSON
 /// protocol. Bumped on any incompatible change; the SDK refuses to start on a
 /// mismatch.
-pub const ORBIT_ABI_VERSION: u32 = 1;
+pub const ORBIT_ABI_VERSION: u32 = 2;

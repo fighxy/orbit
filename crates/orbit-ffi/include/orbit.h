@@ -9,7 +9,7 @@
 // Version of the native contract: C functions, JNI methods and the JSON
 // protocol. Bumped on any incompatible change; the SDK refuses to start on a
 // mismatch.
-#define ORBIT_ABI_VERSION 1
+#define ORBIT_ABI_VERSION 2
 
 #define ORBIT_OK 0
 
@@ -41,6 +41,11 @@
 
 #define ORBIT_ERR_INTERNAL 14
 
+#define ORBIT_ERR_WRONG_PASSCODE 15
+
+// First byte of a passcode-locked identity secret; plain secrets start with 1.
+#define ORBIT_IDENTITY_LOCKED_TAG 16
+
 // Byte buffer allocated by Rust.
 typedef struct OrbitBuffer {
   uint8_t *data;
@@ -59,6 +64,28 @@ uint32_t orbit_abi_version(void);
 // # Safety
 // `out_secret` must be a valid pointer to writable `OrbitBuffer` storage.
 int32_t orbit_identity_generate(struct OrbitBuffer *out_secret);
+
+// Seals an identity secret under a UTF-8 passcode (Argon2id). The result
+// starts with `ORBIT_IDENTITY_LOCKED_TAG` and replaces the stored secret.
+//
+// # Safety
+// Input pointers follow the module conventions; `out_locked` must be writable.
+int32_t orbit_identity_lock(const uint8_t *secret,
+                            size_t secret_len,
+                            const uint8_t *passcode,
+                            size_t passcode_len,
+                            struct OrbitBuffer *out_locked);
+
+// Opens a passcode-locked identity secret. Returns
+// `ORBIT_ERR_WRONG_PASSCODE` when the passcode does not match.
+//
+// # Safety
+// Input pointers follow the module conventions; `out_secret` must be writable.
+int32_t orbit_identity_unlock(const uint8_t *locked,
+                              size_t locked_len,
+                              const uint8_t *passcode,
+                              size_t passcode_len,
+                              struct OrbitBuffer *out_secret);
 
 // Opens the account described by `secret` in the directory from
 // `config_json` (`{"data_dir": "/absolute/path"}`).

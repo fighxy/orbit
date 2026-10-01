@@ -37,6 +37,8 @@ pub enum Error {
     Busy,
     #[error("internal error: {0}")]
     Internal(&'static str),
+    #[error("passcode is incorrect")]
+    WrongPasscode,
 }
 
 /// Stable error codes. Values are part of the C ABI and must not be reused.
@@ -58,6 +60,7 @@ pub enum ErrorCode {
     Closed = 12,
     Busy = 13,
     Internal = 14,
+    WrongPasscode = 15,
 }
 
 impl Error {
@@ -77,6 +80,7 @@ impl Error {
             Error::Closed => ErrorCode::Closed,
             Error::Busy => ErrorCode::Busy,
             Error::Internal(_) => ErrorCode::Internal,
+            Error::WrongPasscode => ErrorCode::WrongPasscode,
         }
     }
 

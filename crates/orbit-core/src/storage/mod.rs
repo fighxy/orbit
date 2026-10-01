@@ -15,6 +15,7 @@ use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::domain::{
     AccountId, Conversation, ConversationId, ConversationKind, DeviceId, Message, MessageBody, MessageId, MessageState,
+    Profile,
 };
 use crate::error::{Error, Result};
 use crate::identity::LocalIdentity;
@@ -198,6 +199,38 @@ impl Store {
             created_at_ms,
             body,
             state,
+        })
+    }
+
+    pub fn profile(&self) -> Result<Option<Profile>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT display_name, about, updated_at_ms FROM profile WHERE id = 1",
+                [],
+                |row| {
+                    Ok(Profile {
+                        display_name: row.get(0)?,
+                        about: row.get(1)?,
+                        updated_at_ms: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Stores already normalized profile fields.
+    pub fn update_profile(&mut self, display_name: String, about: String, updated_at_ms: i64) -> Result<Profile> {
+        self.conn.execute(
+            "INSERT INTO profile (id, display_name, about, updated_at_ms) VALUES (1, ?1, ?2, ?3) \
+             ON CONFLICT (id) DO UPDATE SET display_name = excluded.display_name, \
+             about = excluded.about, updated_at_ms = excluded.updated_at_ms",
+            params![display_name, about, updated_at_ms],
+        )?;
+        Ok(Profile {
+            display_name,
+            about,
+            updated_at_ms,
         })
     }
 

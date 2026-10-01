@@ -203,3 +203,44 @@ fn account_directory_is_private() {
         .mode();
     assert_eq!(mode & 0o777, 0o700);
 }
+
+#[test]
+fn profile_round_trips_across_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let secret = IdentitySecret::generate().unwrap();
+    {
+        let mut store = Store::open(dir.path(), &LocalIdentity::from_secret(&secret)).unwrap();
+        assert_eq!(store.profile().unwrap(), None);
+        store.update_profile("Анна".into(), "".into(), 1).unwrap();
+        store.update_profile("Анна К.".into(), "привет".into(), 2).unwrap();
+    }
+    let store = Store::open(dir.path(), &LocalIdentity::from_secret(&secret)).unwrap();
+    let profile = store.profile().unwrap().unwrap();
+    assert_eq!(profile.display_name, "Анна К.");
+    assert_eq!(profile.about, "привет");
+    assert_eq!(profile.updated_at_ms, 2);
+}
+
+#[test]
+fn version_1_database_is_upgraded_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let secret = IdentitySecret::generate().unwrap();
+    let identity = LocalIdentity::from_secret(&secret);
+    let message = {
+        let mut store = Store::open(dir.path(), &identity).unwrap();
+        let saved = store.saved_messages_id();
+        store.insert_text(&saved, "from v1".into(), 1).unwrap()
+    };
+    {
+        // Reproduce a database written by schema version 1.
+        let db = Store::account_dir(dir.path(), &identity.public().account_id).join(DATABASE_FILE);
+        let conn = Connection::open(db).unwrap();
+        conn.execute_batch("DROP TABLE profile; PRAGMA user_version = 1;")
+            .unwrap();
+    }
+    let mut store = Store::open(dir.path(), &identity).unwrap();
+    let saved = store.saved_messages_id();
+    assert_eq!(store.messages(&saved, None, 10).unwrap().messages, vec![message]);
+    assert_eq!(store.profile().unwrap(), None);
+    store.update_profile("Upgraded".into(), "".into(), 3).unwrap();
+}

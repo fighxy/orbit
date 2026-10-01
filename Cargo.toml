@@ -11,6 +11,7 @@ publish = false
 
 [workspace.dependencies]
 orbit-core = { path = "crates/orbit-core" }
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
 blake3 = "1.8"
 chacha20poly1305 = { version = "0.11", features = ["zeroize"] }
 ed25519-dalek = "3.0"
@@ -36,3 +37,8 @@ undocumented_unsafe_blocks = "warn"
 [profile.release]
 # Rust panics must be caught at the FFI boundary, so unwinding stays enabled.
 panic = "unwind"
+
+# Optimize dependencies in debug builds: Argon2 and AEAD code are otherwise
+# slow enough to make passcode unlock in development builds take seconds.
+[profile.dev.package."*"]
+opt-level = 2

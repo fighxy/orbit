@@ -108,6 +108,40 @@ pub extern "system" fn Java_com_orbit_sdk_bridge_OrbitJni_nativeGenerateIdentity
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_com_orbit_sdk_bridge_OrbitJni_nativeLockIdentity<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    secret: JByteArray<'caller>,
+    passcode: JByteArray<'caller>,
+) -> JByteArray<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<_, Failure> {
+            let secret = Zeroizing::new(read_bytes(env, &secret)?);
+            let passcode = Zeroizing::new(read_bytes(env, &passcode)?);
+            let locked = ops::lock_identity(&secret, &passcode)?;
+            Ok(env.byte_array_from_slice(&locked)?)
+        })
+        .resolve::<ThrowOrbitException>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_orbit_sdk_bridge_OrbitJni_nativeUnlockIdentity<'caller>(
+    mut unowned_env: EnvUnowned<'caller>,
+    _class: JClass<'caller>,
+    locked: JByteArray<'caller>,
+    passcode: JByteArray<'caller>,
+) -> JByteArray<'caller> {
+    unowned_env
+        .with_env(|env| -> Result<_, Failure> {
+            let locked = read_bytes(env, &locked)?;
+            let passcode = Zeroizing::new(read_bytes(env, &passcode)?);
+            let secret = ops::unlock_identity(&locked, &passcode)?;
+            Ok(env.byte_array_from_slice(&secret)?)
+        })
+        .resolve::<ThrowOrbitException>()
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_orbit_sdk_bridge_OrbitJni_nativeOpen<'caller>(
     mut unowned_env: EnvUnowned<'caller>,
     _class: JClass<'caller>,

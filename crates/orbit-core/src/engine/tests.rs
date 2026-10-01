@@ -68,8 +68,10 @@ fn snapshot_contains_identity_and_saved_messages() {
     match call(&engine, Command::GetSnapshot).unwrap() {
         CommandResult::Snapshot {
             identity,
+            profile,
             conversations,
         } => {
+            assert_eq!(profile, None);
             assert_eq!(&identity, engine.identity());
             identity.verify().unwrap();
             assert_eq!(conversations.len(), 1);
@@ -302,4 +304,42 @@ fn unread_results_bound_in_flight_commands() {
             .count();
     }
     engine.submit(Command::GetSnapshot).unwrap();
+}
+
+#[test]
+fn profile_update_is_validated_announced_and_in_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = open(dir.path(), &IdentitySecret::generate().unwrap());
+    let invalid = call(
+        &engine,
+        Command::UpdateProfile {
+            display_name: "  ".into(),
+            about: String::new(),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(invalid.code, ErrorCode::InvalidArgument);
+
+    let id = engine
+        .submit(Command::UpdateProfile {
+            display_name: " Анна ".into(),
+            about: "заметки".into(),
+        })
+        .unwrap();
+    let mut seen = Vec::new();
+    let profile = match result_of(&engine, id, &mut seen).unwrap() {
+        CommandResult::ProfileUpdated { profile } => profile,
+        other => panic!("unexpected result {other:?}"),
+    };
+    assert_eq!(profile.display_name, "Анна");
+    assert_eq!(
+        seen,
+        vec![Event::ProfileChanged {
+            profile: profile.clone()
+        }]
+    );
+    match call(&engine, Command::GetSnapshot).unwrap() {
+        CommandResult::Snapshot { profile: stored, .. } => assert_eq!(stored, Some(profile)),
+        other => panic!("unexpected result {other:?}"),
+    }
 }

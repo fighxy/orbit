@@ -31,6 +31,10 @@ pub const ORBIT_ERR_RANDOM: i32 = 11;
 pub const ORBIT_ERR_CLOSED: i32 = 12;
 pub const ORBIT_ERR_BUSY: i32 = 13;
 pub const ORBIT_ERR_INTERNAL: i32 = 14;
+pub const ORBIT_ERR_WRONG_PASSCODE: i32 = 15;
+
+/// First byte of a passcode-locked identity secret; plain secrets start with 1.
+pub const ORBIT_IDENTITY_LOCKED_TAG: u8 = 0x10;
 
 /// Byte buffer allocated by Rust.
 #[repr(C)]
@@ -111,6 +115,58 @@ pub unsafe extern "C" fn orbit_identity_generate(out_secret: *mut OrbitBuffer) -
     guard(|| {
         let out = output(out_secret, "out_secret")?;
         let secret = ops::generate_identity()?;
+        // SAFETY: `out` is non-null and writable per the contract.
+        unsafe { out.write(OrbitBuffer::from_slice(&secret)) };
+        Ok(())
+    })
+}
+
+/// Seals an identity secret under a UTF-8 passcode (Argon2id). The result
+/// starts with `ORBIT_IDENTITY_LOCKED_TAG` and replaces the stored secret.
+///
+/// # Safety
+/// Input pointers follow the module conventions; `out_locked` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn orbit_identity_lock(
+    secret: *const u8,
+    secret_len: usize,
+    passcode: *const u8,
+    passcode_len: usize,
+    out_locked: *mut OrbitBuffer,
+) -> i32 {
+    guard(|| {
+        let out = output(out_locked, "out_locked")?;
+        // SAFETY: caller contract.
+        let secret = unsafe { input(secret, secret_len, "secret") }?;
+        // SAFETY: caller contract.
+        let passcode = unsafe { input(passcode, passcode_len, "passcode") }?;
+        let locked = ops::lock_identity(secret, passcode)?;
+        // SAFETY: `out` is non-null and writable per the contract.
+        unsafe { out.write(OrbitBuffer::from_slice(&locked)) };
+        Ok(())
+    })
+}
+
+/// Opens a passcode-locked identity secret. Returns
+/// `ORBIT_ERR_WRONG_PASSCODE` when the passcode does not match.
+///
+/// # Safety
+/// Input pointers follow the module conventions; `out_secret` must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn orbit_identity_unlock(
+    locked: *const u8,
+    locked_len: usize,
+    passcode: *const u8,
+    passcode_len: usize,
+    out_secret: *mut OrbitBuffer,
+) -> i32 {
+    guard(|| {
+        let out = output(out_secret, "out_secret")?;
+        // SAFETY: caller contract.
+        let locked = unsafe { input(locked, locked_len, "locked") }?;
+        // SAFETY: caller contract.
+        let passcode = unsafe { input(passcode, passcode_len, "passcode") }?;
+        let secret = ops::unlock_identity(locked, passcode)?;
         // SAFETY: `out` is non-null and writable per the contract.
         unsafe { out.write(OrbitBuffer::from_slice(&secret)) };
         Ok(())
@@ -269,6 +325,7 @@ mod tests {
             (ORBIT_ERR_CLOSED, ErrorCode::Closed),
             (ORBIT_ERR_BUSY, ErrorCode::Busy),
             (ORBIT_ERR_INTERNAL, ErrorCode::Internal),
+            (ORBIT_ERR_WRONG_PASSCODE, ErrorCode::WrongPasscode),
         ];
         for (constant, code) in pairs {
             assert_eq!(constant, code as i32, "{code:?}");
@@ -355,5 +412,58 @@ mod tests {
         let buffer = OrbitBuffer::from_slice(&[]);
         assert!(!buffer.data.is_null());
         assert!(take(buffer).is_empty());
+    }
+
+    #[test]
+    fn identity_lock_round_trip_through_c_abi() {
+        let mut secret = OrbitBuffer {
+            data: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: valid out pointer.
+        assert_eq!(unsafe { orbit_identity_generate(&mut secret) }, ORBIT_OK);
+        let secret = take(secret);
+        let passcode = "секрет-1234".as_bytes();
+
+        let mut locked = OrbitBuffer {
+            data: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: pointers and lengths describe live slices.
+        let status = unsafe {
+            orbit_identity_lock(
+                secret.as_ptr(),
+                secret.len(),
+                passcode.as_ptr(),
+                passcode.len(),
+                &mut locked,
+            )
+        };
+        assert_eq!(status, ORBIT_OK, "{}", last_error());
+        let locked = take(locked);
+        assert_eq!(locked[0], ORBIT_IDENTITY_LOCKED_TAG);
+
+        let wrong = b"0000";
+        let mut out = OrbitBuffer {
+            data: ptr::null_mut(),
+            len: 0,
+        };
+        // SAFETY: pointers and lengths describe live slices.
+        let status =
+            unsafe { orbit_identity_unlock(locked.as_ptr(), locked.len(), wrong.as_ptr(), wrong.len(), &mut out) };
+        assert_eq!(status, ORBIT_ERR_WRONG_PASSCODE);
+
+        // SAFETY: pointers and lengths describe live slices.
+        let status = unsafe {
+            orbit_identity_unlock(
+                locked.as_ptr(),
+                locked.len(),
+                passcode.as_ptr(),
+                passcode.len(),
+                &mut out,
+            )
+        };
+        assert_eq!(status, ORBIT_OK, "{}", last_error());
+        assert_eq!(take(out), secret);
     }
 }

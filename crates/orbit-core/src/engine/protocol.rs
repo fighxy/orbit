@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{Conversation, ConversationId, Message};
+use crate::domain::{Conversation, ConversationId, Message, Profile};
 use crate::error::ErrorInfo;
 use crate::identity::PublicIdentity;
 use crate::storage::MessagePage;
@@ -33,6 +33,12 @@ pub enum Command {
         conversation_id: ConversationId,
         text: String,
     },
+    /// Sets the local profile. The name is required; `about` may be empty.
+    UpdateProfile {
+        display_name: String,
+        #[serde(default)]
+        about: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +46,8 @@ pub enum Command {
 pub enum CommandResult {
     Snapshot {
         identity: PublicIdentity,
+        /// `None` until the user sets a profile.
+        profile: Option<Profile>,
         conversations: Vec<Conversation>,
     },
     Messages {
@@ -47,6 +55,9 @@ pub enum CommandResult {
     },
     MessageSaved {
         message: Message,
+    },
+    ProfileUpdated {
+        profile: Profile,
     },
 }
 
@@ -65,6 +76,10 @@ pub enum Event {
     MessageAdded {
         message: Message,
     },
+    /// The local profile changed.
+    ProfileChanged {
+        profile: Profile,
+    },
     /// Events were dropped because the client did not read them in time.
     /// The client must request a new snapshot and reload visible history.
     ResyncRequired,
@@ -74,7 +89,7 @@ impl Event {
     /// Results are never dropped; their number is bounded by in-flight
     /// commands. Notifications can be recovered through a snapshot.
     pub(crate) fn is_droppable(&self) -> bool {
-        matches!(self, Event::MessageAdded { .. })
+        matches!(self, Event::MessageAdded { .. } | Event::ProfileChanged { .. })
     }
 
     pub(crate) fn is_command_result(&self) -> bool {

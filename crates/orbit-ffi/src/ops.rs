@@ -16,6 +16,20 @@ pub(crate) fn generate_identity() -> Result<Zeroizing<Vec<u8>>> {
     Ok(IdentitySecret::generate()?.to_bytes())
 }
 
+/// Seals an identity secret under a passcode (UTF-8).
+pub(crate) fn lock_identity(secret: &[u8], passcode: &[u8]) -> Result<Vec<u8>> {
+    orbit_core::identity::passcode::lock(secret, utf8_passcode(passcode)?)
+}
+
+/// Opens a passcode-locked identity secret.
+pub(crate) fn unlock_identity(blob: &[u8], passcode: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+    orbit_core::identity::passcode::unlock(blob, utf8_passcode(passcode)?)
+}
+
+fn utf8_passcode(passcode: &[u8]) -> Result<&str> {
+    std::str::from_utf8(passcode).map_err(|_| Error::InvalidArgument("passcode is not valid UTF-8".into()))
+}
+
 pub(crate) fn open(config_json: &[u8], secret: &[u8]) -> Result<u64> {
     let config: EngineConfig = parse_json(config_json, "engine config")?;
     let secret = IdentitySecret::from_bytes(secret)?;

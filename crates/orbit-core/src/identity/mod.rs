@@ -12,6 +12,8 @@
 //! * The account key certifies the device key ([`DeviceCertificate`]).
 //! * The local storage key is derived from the device seed.
 
+pub mod passcode;
+
 use std::fmt;
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};

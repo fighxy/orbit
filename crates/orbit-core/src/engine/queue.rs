@@ -202,6 +202,7 @@ mod tests {
                 Event::CommandFailed { .. } => "result",
                 Event::ResyncRequired => "resync",
                 Event::MessageAdded { .. } => "message",
+                Event::ProfileChanged { .. } => "profile",
                 Event::CommandSucceeded { .. } => "ok",
             })
             .collect();

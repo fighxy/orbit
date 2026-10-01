@@ -7,7 +7,20 @@ use crate::domain::{ConversationId, ConversationKind};
 use crate::error::{Error, Result};
 use crate::identity::PublicIdentity;
 
-pub(super) const CURRENT_VERSION: i64 = 1;
+pub(super) const CURRENT_VERSION: i64 = 2;
+
+/// Upgrade steps; entry `n` moves the schema from version `n + 1` to `n + 2`.
+const UPGRADES: &[&str] = &[
+    // v2: local profile shown to the user and, later, shared with contacts.
+    "
+CREATE TABLE profile (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    display_name  TEXT NOT NULL,
+    about         TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+) STRICT;
+",
+];
 
 const META_ACCOUNT_ID: &str = "account_id";
 const META_DEVICE_ID: &str = "device_id";
@@ -63,11 +76,34 @@ pub(super) fn migrate(
     identity: &PublicIdentity,
     cipher: &LocalCipher,
 ) -> Result<ConversationId> {
-    let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    match version {
-        0 => initialize(conn, identity, cipher),
-        CURRENT_VERSION => verify_owner(conn, identity, cipher),
-        other => Err(Error::UnsupportedStorageVersion(other)),
+    let version = user_version(conn)?;
+    let saved_messages = match version {
+        0 => initialize(conn, identity, cipher)?,
+        1..=CURRENT_VERSION => verify_owner(conn, identity, cipher)?,
+        other => return Err(Error::UnsupportedStorageVersion(other)),
+    };
+    upgrade(conn)?;
+    Ok(saved_messages)
+}
+
+fn user_version(conn: &Connection) -> Result<i64> {
+    Ok(conn.pragma_query_value(None, "user_version", |row| row.get(0))?)
+}
+
+/// Applies pending upgrade steps, each in its own transaction.
+fn upgrade(conn: &mut Connection) -> Result<()> {
+    loop {
+        let version = user_version(conn)?;
+        if version >= CURRENT_VERSION {
+            return Ok(());
+        }
+        let step = UPGRADES
+            .get(usize::try_from(version - 1).map_err(|_| Error::Corrupted("schema version"))?)
+            .ok_or(Error::Internal("missing schema upgrade step"))?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Exclusive)?;
+        tx.execute_batch(step)?;
+        tx.pragma_update(None, "user_version", version + 1)?;
+        tx.commit()?;
     }
 }
 
@@ -91,7 +127,8 @@ fn initialize(conn: &mut Connection, identity: &PublicIdentity, cipher: &LocalCi
             created_at_ms
         ],
     )?;
-    tx.pragma_update(None, "user_version", CURRENT_VERSION)?;
+    // Later versions are reached through `upgrade`, like existing databases.
+    tx.pragma_update(None, "user_version", 1)?;
     tx.commit()?;
     Ok(saved_messages)
 }

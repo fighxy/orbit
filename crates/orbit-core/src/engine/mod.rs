@@ -24,7 +24,7 @@ use serde::Deserialize;
 pub use protocol::{Command, CommandResult, Event, RequestId, SequencedEvent};
 use queue::EventQueue;
 
-use crate::domain::normalize_text;
+use crate::domain::{normalize_profile, normalize_text};
 use crate::error::{Error, Result};
 use crate::identity::{IdentitySecret, LocalIdentity, PublicIdentity};
 use crate::limits::{EVENT_QUEUE_CAPACITY, MAX_EVENT_BATCH, MAX_IN_FLIGHT_COMMANDS};
@@ -194,6 +194,7 @@ fn execute(
     match command {
         Command::GetSnapshot => Ok(CommandResult::Snapshot {
             identity: identity.clone(),
+            profile: store.profile()?,
             conversations: store.conversations()?,
         }),
         Command::ListMessages {
@@ -210,6 +211,14 @@ fn execute(
                 message: message.clone(),
             });
             Ok(CommandResult::MessageSaved { message })
+        }
+        Command::UpdateProfile { display_name, about } => {
+            let (display_name, about) = normalize_profile(&display_name, &about)?;
+            let profile = store.update_profile(display_name, about, now_ms())?;
+            queue.push(Event::ProfileChanged {
+                profile: profile.clone(),
+            });
+            Ok(CommandResult::ProfileUpdated { profile })
         }
     }
 }
