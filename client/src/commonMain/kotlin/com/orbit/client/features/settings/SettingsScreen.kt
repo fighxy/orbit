@@ -8,21 +8,25 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,9 +41,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.orbit.client.app.PreferencesRepository
 import com.orbit.client.app.ProfileRules
+import com.orbit.client.app.SendShortcut
+import com.orbit.client.app.ThemeMode
+import com.orbit.client.app.UiPreferences
 import com.orbit.client.designsystem.Avatar
 import com.orbit.client.designsystem.Strings
 import com.orbit.client.features.chat.ChatSession
@@ -58,9 +67,15 @@ interface SecurityActions {
 }
 
 @Composable
-fun SettingsScreen(session: ChatSession, security: SecurityActions, onBack: () -> Unit) {
+fun SettingsScreen(
+    session: ChatSession,
+    security: SecurityActions,
+    preferences: PreferencesRepository,
+    onBack: () -> Unit,
+) {
     val identity by session.identity.collectAsState()
     val profile by session.profile.collectAsState()
+    val prefs by preferences.state.collectAsState()
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -100,6 +115,7 @@ fun SettingsScreen(session: ChatSession, security: SecurityActions, onBack: () -
                     }
                     Hint(Strings.accountKeyExplanation)
                 }
+                AppearanceSection(prefs, preferences)
                 SecuritySection(security)
                 Section(Strings.aboutSection) {
                     Text("${Strings.version}: $APP_VERSION (ABI $SUPPORTED_ABI_VERSION)")
@@ -162,6 +178,48 @@ private fun ProfileSection(session: ChatSession, savedName: String, savedAbout: 
             val message = if (changed) error else status
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
+    }
+}
+
+@Composable
+private fun AppearanceSection(prefs: UiPreferences, preferences: PreferencesRepository) {
+    Section(Strings.appearanceSection) {
+        Text(Strings.theme, style = MaterialTheme.typography.labelMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                ThemeMode.System to Strings.themeSystem,
+                ThemeMode.Light to Strings.themeLight,
+                ThemeMode.Dark to Strings.themeDark,
+            ).forEach { (mode, label) ->
+                FilterChip(
+                    selected = prefs.theme == mode,
+                    onClick = { preferences.setTheme(mode) },
+                    label = { Text(label) },
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(Strings.sendWith, style = MaterialTheme.typography.labelMedium)
+        listOf(
+            SendShortcut.Enter to Strings.sendWithEnter,
+            SendShortcut.CtrlEnter to Strings.sendWithCtrlEnter,
+        ).forEach { (shortcut, label) ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = prefs.sendShortcut == shortcut,
+                        onClick = { preferences.setSendShortcut(shortcut) },
+                        role = Role.RadioButton,
+                    ),
+            ) {
+                RadioButton(selected = prefs.sendShortcut == shortcut, onClick = null)
+                Spacer(Modifier.width(8.dp))
+                Text(label, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        Hint(Strings.shortcutsHint)
     }
 }
 

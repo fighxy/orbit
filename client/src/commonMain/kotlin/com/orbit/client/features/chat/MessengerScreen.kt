@@ -10,23 +10,27 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.orbit.client.app.PreferencesRepository
+import com.orbit.client.app.ShellNavigation
 import com.orbit.client.features.chatlist.ChatListPane
 import com.orbit.client.features.settings.SecurityActions
 import com.orbit.client.features.settings.SettingsScreen
 
 /** Two panes on wide windows; list or chat on narrow screens. */
 @Composable
-fun MessengerScreen(session: ChatSession, security: SecurityActions) {
-    var showSettings by rememberSaveable { mutableStateOf(false) }
-    if (showSettings) {
-        SettingsScreen(session, security, onBack = { showSettings = false })
+fun MessengerScreen(
+    session: ChatSession,
+    security: SecurityActions,
+    preferences: PreferencesRepository,
+    navigation: ShellNavigation,
+) {
+    if (navigation.settingsOpen) {
+        SettingsScreen(session, security, preferences, onBack = { navigation.settingsOpen = false })
         return
     }
+    val prefs by preferences.state.collectAsState()
     val identity by session.identity.collectAsState()
     val profile by session.profile.collectAsState()
     val conversations by session.conversations.collectAsState()
@@ -48,7 +52,7 @@ fun MessengerScreen(session: ChatSession, security: SecurityActions) {
                     profileName = profile?.displayName,
                     banner = banner,
                     onSelect = session::select,
-                    onOpenSettings = { showSettings = true },
+                    onOpenSettings = { navigation.settingsOpen = true },
                     onDismissBanner = session::dismissBanner,
                     modifier = Modifier.width(320.dp).fillMaxHeight(),
                 )
@@ -56,6 +60,7 @@ fun MessengerScreen(session: ChatSession, security: SecurityActions) {
                 ChatPane(
                     state = chat,
                     conversation = conversations.firstOrNull { it.id == chat.conversationId },
+                    sendShortcut = prefs.sendShortcut,
                     onSend = session::send,
                     onLoadOlder = session::loadOlder,
                     onDismissError = session::dismissError,
@@ -71,7 +76,7 @@ fun MessengerScreen(session: ChatSession, security: SecurityActions) {
                 profileName = profile?.displayName,
                 banner = banner,
                 onSelect = session::select,
-                onOpenSettings = { showSettings = true },
+                onOpenSettings = { navigation.settingsOpen = true },
                 onDismissBanner = session::dismissBanner,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -79,6 +84,7 @@ fun MessengerScreen(session: ChatSession, security: SecurityActions) {
             ChatPane(
                 state = chat,
                 conversation = conversations.firstOrNull { it.id == chat.conversationId },
+                sendShortcut = prefs.sendShortcut,
                 onSend = session::send,
                 onLoadOlder = session::loadOlder,
                 onDismissError = session::dismissError,

@@ -9,6 +9,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.orbit.client.designsystem.OrbitTheme
 import com.orbit.client.designsystem.Strings
@@ -21,8 +22,14 @@ import com.orbit.client.features.status.StatusScreen
 
 /** Compose root shared by Android, iOS and the JVM desktop app. */
 @Composable
-fun OrbitApp(controller: AppController, linuxDesktop: Boolean = false) {
-    OrbitTheme {
+fun OrbitApp(
+    controller: AppController,
+    preferences: PreferencesRepository,
+    navigation: ShellNavigation = remember { ShellNavigation() },
+    linuxDesktop: Boolean = false,
+) {
+    val prefs by preferences.state.collectAsState()
+    OrbitTheme(prefs.theme) {
         Surface(modifier = Modifier.fillMaxSize()) {
             val state by controller.state.collectAsState()
             // Keeps content clear of system bars, cutouts and the keyboard.
@@ -45,6 +52,8 @@ fun OrbitApp(controller: AppController, linuxDesktop: Boolean = false) {
                     )
                     is AppState.Ready -> MessengerScreen(
                         session = current.session,
+                        preferences = preferences,
+                        navigation = navigation,
                         security = object : SecurityActions {
                             override val passcodeEnabled = current.passcodeEnabled
 

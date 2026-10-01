@@ -6,6 +6,7 @@ import com.orbit.sdk.bridge.IosNativeLibrary
 import com.orbit.sdk.platform.IosPaths
 import com.orbit.sdk.platform.KeychainSecretStore
 import kotlinx.coroutines.MainScope
+import platform.Foundation.NSUserDefaults
 import platform.UIKit.UIViewController
 
 /**
@@ -20,5 +21,14 @@ fun MainViewController(): UIViewController {
     )
     val controller = AppController(sdk.asGateway(), MainScope())
     controller.start()
-    return ComposeUIViewController { OrbitApp(controller) }
+    val preferences = PreferencesRepository(UserDefaultsStorage())
+    return ComposeUIViewController { OrbitApp(controller, preferences) }
+}
+
+private class UserDefaultsStorage : PreferencesStorage {
+    private val defaults = NSUserDefaults.standardUserDefaults
+
+    override fun read(key: String): String? = defaults.stringForKey(key)
+
+    override fun write(key: String, value: String) = defaults.setObject(value, forKey = key)
 }
