@@ -2,7 +2,7 @@
   "name": "orbit",
   "version": "0.1.0",
   "private": true,
-  "description": "P2P messenger client on the Holepunch stack",
+  "description": "Reference inventory of Holepunch packages; not used by the Orbit client",
   "type": "module",
   "scripts": {
     "test": "echo \"No tests yet\" && exit 0"
