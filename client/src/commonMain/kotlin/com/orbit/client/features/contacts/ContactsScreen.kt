@@ -32,7 +32,12 @@ fun ContactsScreen(session: ChatSession, onBack: () -> Unit, onContactAdded: () 
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var permissionNote by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(network.node) { if (node.isBlank()) node = network.node.orEmpty() }
+    var showMailbox by rememberSaveable { mutableStateOf(false) }
+    val onMailbox = network.node?.contains('@') == true
+    LaunchedEffect(network.node) {
+        val current = network.node.orEmpty()
+        if (node.isBlank() && current.contains('@')) node = current
+    }
 
     fun perform(action: suspend () -> Unit) {
         busy = true
@@ -57,21 +62,38 @@ fun ContactsScreen(session: ChatSession, onBack: () -> Unit, onContactAdded: () 
         HorizontalDivider()
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp).widthIn(max = 680.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(Strings.deliveryServer, style = MaterialTheme.typography.titleLarge)
-            Text(Strings.deliveryServerHint)
-            Text(when (network.state) {
-                ConnectionState.Unconfigured -> Strings.serverNotConfigured
-                ConnectionState.Connecting -> Strings.serverConnecting
-                ConnectionState.Online -> Strings.serverConnected
-                ConnectionState.Offline -> Strings.serverOffline
-            }, color = MaterialTheme.colorScheme.primary)
-            OutlinedTextField(node, { node = it }, label = { Text(Strings.nodeAddress) },
-                enabled = !busy, modifier = Modifier.fillMaxWidth(), maxLines = 3)
-            OutlinedTextField(code, { code = it }, label = { Text(Strings.registrationCode) },
-                enabled = !busy, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-            prepareLocalNetwork?.let { Text(Strings.localNetworkHint, style = MaterialTheme.typography.bodySmall) }
-            Button(onClick = { perform { prepareNetwork(); session.registerNode(node.trim(), code.takeIf { it.isNotBlank() }); code = "" } }, enabled = !busy && node.isNotBlank()) {
-                Text(Strings.registerOnServer)
+            if (!onMailbox) {
+                Text(Strings.directTitle, style = MaterialTheme.typography.titleLarge)
+                Text(Strings.directHint)
+                Text(when (network.state) {
+                    ConnectionState.Unconfigured -> Strings.directNeedsProfile
+                    ConnectionState.Connecting -> Strings.directConnecting
+                    ConnectionState.Online -> Strings.directOnline
+                    ConnectionState.Offline -> Strings.directOffline
+                }, color = MaterialTheme.colorScheme.primary)
+                if (!showMailbox) {
+                    TextButton(onClick = { showMailbox = true }) { Text(Strings.useOwnNode) }
+                }
+            }
+            if (onMailbox || showMailbox) {
+                Text(Strings.deliveryServer, style = MaterialTheme.typography.titleLarge)
+                Text(Strings.deliveryServerHint)
+                if (onMailbox) {
+                    Text(when (network.state) {
+                        ConnectionState.Unconfigured -> Strings.serverNotConfigured
+                        ConnectionState.Connecting -> Strings.serverConnecting
+                        ConnectionState.Online -> Strings.serverConnected
+                        ConnectionState.Offline -> Strings.serverOffline
+                    }, color = MaterialTheme.colorScheme.primary)
+                }
+                OutlinedTextField(node, { node = it }, label = { Text(Strings.nodeAddress) },
+                    enabled = !busy, modifier = Modifier.fillMaxWidth(), maxLines = 3)
+                OutlinedTextField(code, { code = it }, label = { Text(Strings.registrationCode) },
+                    enabled = !busy, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                prepareLocalNetwork?.let { Text(Strings.localNetworkHint, style = MaterialTheme.typography.bodySmall) }
+                Button(onClick = { perform { prepareNetwork(); session.registerNode(node.trim(), code.takeIf { it.isNotBlank() }); code = "" } }, enabled = !busy && node.isNotBlank()) {
+                    Text(Strings.registerOnServer)
+                }
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             (error ?: network.error)?.let { Text(it, color = MaterialTheme.colorScheme.error) }

@@ -31,6 +31,8 @@ import kotlinx.coroutines.withTimeout
 private class FakeBackend : ChatBackend {
     override suspend fun registerNode(node: String, registrationCode: String?): com.orbit.sdk.model.NetworkStatus = error("unused")
     override suspend fun createInvite(): String = error("unused")
+    override suspend fun createGroup(title: String, members: List<ConversationId>): com.orbit.sdk.model.Conversation = error("unused")
+    override suspend fun createChannel(title: String, members: List<ConversationId>): com.orbit.sdk.model.Conversation = error("unused")
     override suspend fun inspectInvite(text: String): com.orbit.sdk.model.InvitePreview = error("unused")
     override suspend fun acceptInvite(text: String): com.orbit.sdk.model.Contact = error("unused")
     var profile: Profile? = null
@@ -48,8 +50,18 @@ private class FakeBackend : ChatBackend {
 
     override suspend fun sendText(conversationId: ConversationId, text: String): Message = error("unused")
 
+    override suspend fun editText(conversationId: ConversationId, messageId: com.orbit.sdk.model.MessageId, text: String): Message = error("unused")
+
+    override suspend fun deleteText(conversationId: ConversationId, messageId: com.orbit.sdk.model.MessageId): Message = error("unused")
+
     override suspend fun updateProfile(displayName: String, about: String) =
         Profile(displayName.trim(), about.trim(), 1).also { profile = it }
+
+    override suspend fun setAvatar(imageBase64: String): Profile = error("unused")
+
+    override suspend fun sendVoice(conversationId: ConversationId, wavBase64: String): Message = error("unused")
+
+    override suspend fun readVoice(messageId: com.orbit.sdk.model.MessageId): String = error("unused")
 
     override suspend fun close() {
         closed = true

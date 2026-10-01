@@ -87,3 +87,70 @@ fn invitations_are_verified_and_cannot_add_self() {
     bad[last] = if bad[last] == b'A' { b'B' } else { b'A' };
     assert!(b.inspect_invite(std::str::from_utf8(&bad).unwrap(), 11).is_err());
 }
+
+#[test]
+fn later_edit_wins_even_when_it_arrives_before_the_text() {
+    let a_dir = tempfile::tempdir().unwrap();
+    let b_dir = tempfile::tempdir().unwrap();
+    let (mut a, ai) = setup(a_dir.path(), "Алиса");
+    let (mut b, bi) = setup(b_dir.path(), "Борис");
+    let invitation = a.create_invite(&ai, 10).unwrap();
+    let contact = b.accept_invite(&bi, &invitation, 11).unwrap();
+    let request = b.outbox(10).unwrap().remove(0);
+    a.receive_item(&ai, &item(request.envelope), 12).unwrap();
+    b.deposited(&request.id).unwrap();
+    let confirmation = a.outbox(10).unwrap().remove(0);
+    b.receive_item(&bi, &item(confirmation.envelope), 13).unwrap();
+    a.deposited(&confirmation.id).unwrap();
+
+    let message = b
+        .queue_text(&bi, &contact.conversation_id, "secret text".into(), 14)
+        .unwrap();
+    b.revise_own(&bi, &contact.conversation_id, &message.id, Some("one".into()), 15)
+        .unwrap();
+    b.revise_own(&bi, &contact.conversation_id, &message.id, Some("two".into()), 16)
+        .unwrap();
+    let jobs = b.outbox(10).unwrap();
+    assert_eq!(jobs.len(), 3);
+    a.receive_item(&ai, &item(jobs[2].envelope.clone()), 17).unwrap();
+    a.receive_item(&ai, &item(jobs[1].envelope.clone()), 18).unwrap();
+    assert!(
+        a.messages(&contact.conversation_id, None, 10)
+            .unwrap()
+            .messages
+            .is_empty()
+    );
+    a.receive_item(&ai, &item(jobs[0].envelope.clone()), 19).unwrap();
+    let stored = a
+        .messages(&contact.conversation_id, None, 10)
+        .unwrap()
+        .messages
+        .remove(0);
+    assert_eq!(stored.id, message.id);
+    assert_eq!(stored.revision, 2);
+    match stored.body {
+        crate::domain::MessageBody::Text { text } => assert_eq!(text, "two"),
+        other => panic!("unexpected body {other:?}"),
+    }
+
+    assert!(
+        a.revise_own(&ai, &contact.conversation_id, &message.id, Some("hack".into()), 20)
+            .is_err()
+    );
+    let deleted = b
+        .revise_own(&bi, &contact.conversation_id, &message.id, None, 21)
+        .unwrap();
+    assert!(deleted.deleted);
+    let deletion = b.outbox(10).unwrap().into_iter().last().unwrap();
+    a.receive_item(&ai, &item(deletion.envelope), 22).unwrap();
+    let stored = a
+        .messages(&contact.conversation_id, None, 10)
+        .unwrap()
+        .messages
+        .remove(0);
+    assert!(stored.deleted);
+    assert!(
+        b.revise_own(&bi, &contact.conversation_id, &message.id, Some("back".into()), 23)
+            .is_err()
+    );
+}

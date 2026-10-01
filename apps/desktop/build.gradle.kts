@@ -21,6 +21,7 @@ dependencies {
     implementation(project(":client"))
     implementation(compose.desktop.currentOs)
     implementation(libs.kotlinx.coroutines.swing)
+    testImplementation(kotlin("test"))
 }
 
 // The Rust engine is shipped inside the application as a Compose app
@@ -65,7 +66,7 @@ compose.desktop {
             vendor = "Orbit"
             appResourcesRootDir.set(nativeResources)
             // Modules reported by :apps:desktop:suggestRuntimeModules.
-            modules("java.instrument", "jdk.unsupported")
+            modules("java.instrument", "java.desktop", "jdk.unsupported")
             windows {
                 // Installs into the user's profile; no administrator rights needed.
                 perUserInstall = true
@@ -84,6 +85,15 @@ compose.desktop {
     }
 }
 
+val copyNodeProgram = tasks.register<Copy>("copyNodeProgram") {
+    group = "orbit"
+    description = "Bundles orbit-node.exe next to the desktop client when the release binary exists."
+    val exe = rootProject.layout.projectDirectory.file("target/release/orbit-node.exe")
+    onlyIf { exe.asFile.isFile }
+    from(exe)
+    into(nativeResources.map { it.dir(hostResourceDir) })
+}
+
 tasks.matching { it.name == "prepareAppResources" }.configureEach {
-    dependsOn(copyNativeLibrary)
+    dependsOn(copyNativeLibrary, copyNodeProgram)
 }

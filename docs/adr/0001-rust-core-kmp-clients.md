@@ -2,6 +2,7 @@
 
 - Дата: 2026-10-01.
 - Статус: направление принято; конкретные библиотеки и эксплуатационные пределы требуют экспериментов.
+- Working tree (`feat/vertical-chat`), not a change to this decision: direct sessions use Iroh (`presets::N0`, ALPN `orbit/direct/1`). The invite carries an endpoint id, not a pasted socket. Mailbox QUIC (`orbit/mailbox/1`) still dials `hex@ip:port` with relays disabled. The gates in the table below (device matrix, network changes, battery, OpenMLS, an SFU) are not closed. The pairwise group in the tree is not MLS. Voice notes are chunked 16 kHz PCM WAV in direct chats and saved messages. Android and desktop record and play them. iOS does not. Video notes and voice rooms are not started. A 24-word phrase restores the same Rust identity and is not on the screen or in the FFI. ABI is 6. Schema version is 7.
 - Основание: план и архитектурное ревью Orbit.
 
 ## Контекст

@@ -10,6 +10,10 @@ pub enum ConversationKind {
     /// Notes the account keeps for itself; never leaves the device yet.
     SavedMessages,
     Direct,
+    /// Every member can publish. Copies are sealed separately for each member.
+    Group,
+    /// Only the creator publishes. Delivery is the same pairwise fan-out.
+    Channel,
 }
 
 impl ConversationKind {
@@ -17,6 +21,8 @@ impl ConversationKind {
         match self {
             ConversationKind::SavedMessages => "saved_messages",
             ConversationKind::Direct => "direct",
+            ConversationKind::Group => "group",
+            ConversationKind::Channel => "channel",
         }
     }
 
@@ -24,6 +30,8 @@ impl ConversationKind {
         match value {
             "saved_messages" => Ok(ConversationKind::SavedMessages),
             "direct" => Ok(ConversationKind::Direct),
+            "group" => Ok(ConversationKind::Group),
+            "channel" => Ok(ConversationKind::Channel),
             _ => Err(Error::Corrupted("unknown conversation kind")),
         }
     }
@@ -36,12 +44,37 @@ pub struct Conversation {
     pub created_at_ms: i64,
     pub last_message: Option<Message>,
     pub contact: Option<super::Contact>,
+    /// Set for a group or a channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// False for a channel subscriber. Absent means this device may publish.
+    #[serde(default = "default_can_post", skip_serializing_if = "is_true")]
+    pub can_post: bool,
+}
+
+fn default_can_post() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MessageBody {
-    Text { text: String },
+    Text {
+        text: String,
+    },
+    /// Author removed the text. The plaintext is not kept.
+    Deleted,
+    /// Recorded voice note. The PCM WAV itself stays in `voice_notes`, not in
+    /// this body, so a history page does not carry the audio.
+    VoiceNote {
+        duration_ms: u32,
+        /// Peak amplitude of each slice, 0–255, at most 48 bars.
+        waveform: Vec<u8>,
+    },
 }
 
 /// Delivery state. Later stages add outbox, mailbox and recipient states;
@@ -93,6 +126,23 @@ pub struct Message {
     pub created_at_ms: i64,
     pub body: MessageBody,
     pub state: MessageState,
+    /// Zero is the original text. Each accepted edit or delete adds one.
+    #[serde(default, skip_serializing_if = "revision_is_zero")]
+    pub revision: u32,
+    /// Author's wall clock of the latest edit or delete. Display only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_at_ms: Option<i64>,
+    /// The author removed the text. Later edits are ignored.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub deleted: bool,
+}
+
+fn revision_is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Trims surrounding whitespace and validates a text body.

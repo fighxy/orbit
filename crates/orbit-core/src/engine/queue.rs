@@ -163,6 +163,9 @@ mod tests {
                 created_at_ms: 0,
                 body: crate::domain::MessageBody::Text { text: "x".into() },
                 state: crate::domain::MessageState::SavedLocally,
+                revision: 0,
+                edited_at_ms: None,
+                deleted: false,
             },
         }
     }

@@ -4,9 +4,12 @@ import com.orbit.client.app.ChatBackend
 import com.orbit.client.designsystem.Strings
 import com.orbit.sdk.OrbitEvent
 import com.orbit.sdk.OrbitException
+import kotlin.io.encoding.Base64
 import com.orbit.sdk.model.Conversation
 import com.orbit.sdk.model.ConversationId
+import com.orbit.sdk.model.ConversationKind
 import com.orbit.sdk.model.Message
+import com.orbit.sdk.model.MessageId
 import com.orbit.sdk.model.MessageState
 import com.orbit.sdk.model.Profile
 import com.orbit.sdk.model.PublicIdentity
@@ -65,6 +68,22 @@ class ChatSession(
         reloadSnapshot()
         select(contact.conversationId)
         return contact
+    }
+
+    fun createRoom(kind: ConversationKind, title: String, members: List<ConversationId>) {
+        scope.launch {
+            try {
+                val created = when (kind) {
+                    ConversationKind.Group -> backend.createGroup(title, members)
+                    ConversationKind.Channel -> backend.createChannel(title, members)
+                    else -> return@launch
+                }
+                reloadSnapshot()
+                select(created.id)
+            } catch (e: OrbitException) {
+                mutableBanner.value = Strings.describe(e)
+            }
+        }
     }
 
     private val mutableProfile = MutableStateFlow<Profile?>(null)
@@ -127,11 +146,59 @@ class ChatSession(
         }
     }
 
+    fun edit(messageId: MessageId, text: String) {
+        val conversationId = mutableChat.value.conversationId ?: return
+        if (text.isBlank()) return
+        mutableChat.update { it.copy(sending = it.sending + 1) }
+        scope.launch {
+            try {
+                upsert(backend.editText(conversationId, messageId, text))
+                updateChat(conversationId) { it.copy(sending = (it.sending - 1).coerceAtLeast(0)) }
+            } catch (e: OrbitException) {
+                updateChat(conversationId) { it.copy(sending = (it.sending - 1).coerceAtLeast(0), error = Strings.describe(e)) }
+            }
+        }
+    }
+
+    fun delete(messageId: MessageId) {
+        val conversationId = mutableChat.value.conversationId ?: return
+        scope.launch {
+            try {
+                upsert(backend.deleteText(conversationId, messageId))
+            } catch (e: OrbitException) {
+                updateChat(conversationId) { it.copy(error = Strings.describe(e)) }
+            }
+        }
+    }
+
+    fun sendVoice(conversationId: ConversationId, wav: ByteArray) {
+        val encoded = Base64.Default.encode(wav)
+        mutableChat.update { if (it.conversationId == conversationId) it.copy(sending = it.sending + 1) else it }
+        scope.launch {
+            try {
+                upsert(backend.sendVoice(conversationId, encoded))
+                updateChat(conversationId) { it.copy(sending = (it.sending - 1).coerceAtLeast(0)) }
+            } catch (e: OrbitException) {
+                updateChat(conversationId) { it.copy(sending = (it.sending - 1).coerceAtLeast(0), error = Strings.describe(e)) }
+            }
+        }
+    }
+
+    suspend fun readVoice(messageId: MessageId): ByteArray = Base64.Default.decode(backend.readVoice(messageId))
+
     fun dismissError() = mutableChat.update { it.copy(error = null) }
 
     /** Saves the profile; returns a user-facing error or null on success. */
     suspend fun updateProfile(displayName: String, about: String): String? = try {
         mutableProfile.value = backend.updateProfile(displayName, about)
+        null
+    } catch (e: OrbitException) {
+        Strings.describe(e)
+    }
+
+    /** Sets or clears the profile picture. An empty string clears it. */
+    suspend fun setAvatar(imageBase64: String): String? = try {
+        mutableProfile.value = backend.setAvatar(imageBase64)
         null
     } catch (e: OrbitException) {
         Strings.describe(e)
@@ -239,5 +306,12 @@ private fun advancedMessage(old: Message, incoming: Message): Message {
         MessageState.Mailbox -> 2
         MessageState.Delivered, MessageState.Received -> 3
     }
-    return if (rank(old.state) > rank(incoming.state)) old else incoming
+    val content = when {
+        incoming.revision > old.revision -> incoming
+        incoming.revision < old.revision -> old
+        incoming.deleted && !old.deleted -> incoming
+        else -> old
+    }
+    val state = if (rank(old.state) >= rank(incoming.state)) old.state else incoming.state
+    return content.copy(state = state)
 }

@@ -9,10 +9,12 @@ import com.orbit.sdk.bridge.WireResult
 import com.orbit.sdk.bridge.decodeBatch
 import com.orbit.sdk.bridge.toJsonBytes
 import com.orbit.sdk.model.Contact
+import com.orbit.sdk.model.Conversation
 import com.orbit.sdk.model.InvitePreview
 import com.orbit.sdk.model.NetworkStatus
 import com.orbit.sdk.model.ConversationId
 import com.orbit.sdk.model.Message
+import com.orbit.sdk.model.MessageId
 import com.orbit.sdk.model.MessagePage
 import com.orbit.sdk.model.Profile
 import com.orbit.sdk.model.Snapshot
@@ -100,6 +102,14 @@ class OrbitClient internal constructor(
     suspend fun acceptInvite(text: String): Contact =
         (call(WireCommand.AcceptInvite(text)) as WireResult.ContactAdded).contact
 
+    /** Pairwise group. `members` are ready direct conversations. */
+    suspend fun createGroup(title: String, members: List<ConversationId>): Conversation =
+        (call(WireCommand.CreateGroup(title, members)) as WireResult.RoomCreated).conversation
+
+    /** Pairwise channel. Only this device can publish. */
+    suspend fun createChannel(title: String, members: List<ConversationId>): Conversation =
+        (call(WireCommand.CreateChannel(title, members)) as WireResult.RoomCreated).conversation
+
     /** Messages older than [beforeSeq] (newest when null), oldest first. */
     suspend fun messages(conversationId: ConversationId, beforeSeq: Long? = null, limit: Int = 50): MessagePage {
         val result = call(WireCommand.ListMessages(conversationId, beforeSeq, limit)) as WireResult.Messages
@@ -112,10 +122,43 @@ class OrbitClient internal constructor(
         return result.message
     }
 
+    /** Replaces the author's own text. The contact receives the same change. */
+    suspend fun editText(conversationId: ConversationId, messageId: MessageId, text: String): Message {
+        val result = call(WireCommand.EditText(conversationId, messageId, text)) as WireResult.MessageSaved
+        return result.message
+    }
+
+    /** Removes the author's own text. The contact sees a deletion. */
+    suspend fun deleteText(conversationId: ConversationId, messageId: MessageId): Message {
+        val result = call(WireCommand.DeleteText(conversationId, messageId)) as WireResult.MessageSaved
+        return result.message
+    }
+
     /** Sets the local profile; the name is required, [about] may be empty. */
     suspend fun updateProfile(displayName: String, about: String): Profile {
         val result = call(WireCommand.UpdateProfile(displayName, about)) as WireResult.ProfileUpdated
         return result.profile
+    }
+
+    /**
+     * Sets the profile picture. [imageBase64] is standard base64 of a JPEG or PNG,
+     * at most 32 KiB. An empty string clears it.
+     */
+    suspend fun setAvatar(imageBase64: String): Profile {
+        val result = call(WireCommand.SetAvatar(imageBase64)) as WireResult.ProfileUpdated
+        return result.profile
+    }
+
+    /** Sends a 16 kHz mono 16-bit PCM WAV, at most 60 seconds. */
+    suspend fun sendVoice(conversationId: ConversationId, wavBase64: String): Message {
+        val result = call(WireCommand.SendVoice(conversationId, wavBase64)) as WireResult.MessageSaved
+        return result.message
+    }
+
+    /** Stored WAV for a voice note, standard base64. */
+    suspend fun readVoice(messageId: MessageId): String {
+        val result = call(WireCommand.ReadVoice(messageId)) as WireResult.Voice
+        return result.wavBase64
     }
 
     /** Closes the engine and fails pending calls. Idempotent. */

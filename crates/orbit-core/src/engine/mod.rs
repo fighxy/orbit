@@ -68,8 +68,16 @@ impl Engine {
         }
         let identity = LocalIdentity::from_secret(secret);
         let public = identity.public().clone();
-        let store = Store::open(&config.data_dir, &identity)?;
-        let delivery_config = store.delivery_config()?;
+        let mut store = Store::open(&config.data_dir, &identity)?;
+        let account_dir = Store::account_dir(&config.data_dir, &public.account_id);
+        let peer = network::peer_secret(&account_dir, secret.device_seed())?;
+        let endpoint_id = *peer.public().as_bytes();
+        let mut delivery_config = store.delivery_config()?;
+        // A named profile is enough to be reachable. A mailbox the user already
+        // chose stays in charge and is not replaced by a direct id.
+        if delivery_config.is_none() && store.profile()?.is_some() {
+            delivery_config = Some(store.configure_direct(endpoint_id)?);
+        }
         let network_status = NetworkStatus {
             node: delivery_config.as_ref().map(|c| c.node.clone()),
             state: if delivery_config.is_some() {
@@ -79,7 +87,7 @@ impl Engine {
             },
             error: None,
         };
-        let network = Network::start(&identity, delivery_config)?;
+        let network = Network::start(&identity, peer, delivery_config)?;
 
         let shared = Arc::new(Shared {
             queue: EventQueue::new(EVENT_QUEUE_CAPACITY),
@@ -91,7 +99,7 @@ impl Engine {
             let shared = shared.clone();
             thread::Builder::new()
                 .name("orbit-engine".into())
-                .spawn(move || run_worker(store, receiver, shared, identity, network, network_status))?
+                .spawn(move || run_worker(store, receiver, shared, identity, network, network_status, endpoint_id))?
         };
 
         Ok(Self {
@@ -178,6 +186,7 @@ fn run_worker(
     identity: LocalIdentity,
     network: Network,
     mut status: NetworkStatus,
+    endpoint_id: [u8; 32],
 ) {
     let mut registration = None;
     let mut in_flight = HashSet::<MessageId>::new();
@@ -194,6 +203,15 @@ fn run_worker(
                     node,
                     result,
                 } => {
+                    // A direct listener can announce itself after the user has
+                    // already switched to a mailbox node. Applying that late
+                    // event would mark the account offline.
+                    if configured_node(&store).as_deref() != Some(node.as_str()) {
+                        if let Some(id) = request_id {
+                            finish_command(&shared.queue, id, Err(Error::Network("registration was superseded")));
+                        }
+                        continue;
+                    }
                     let result = result
                         .map_err(Error::Network)
                         .and_then(|()| store.mark_registered(&node));
@@ -222,6 +240,9 @@ fn run_worker(
                     next_flush = Instant::now();
                 }
                 NetworkEvent::Status { node, state, error } => {
+                    if configured_node(&store).as_deref() != Some(node.as_str()) {
+                        continue;
+                    }
                     let updated = NetworkStatus {
                         node: Some(node),
                         state,
@@ -342,7 +363,11 @@ fn run_worker(
                 registration = Some(job.request_id);
                 Ok(None)
             } else {
-                execute(&mut store, &shared.queue, &identity, &status, job.command).map(Some)
+                let result = execute(&mut store, &shared.queue, &identity, &status, job.command)?;
+                if matches!(result, CommandResult::ProfileUpdated { .. }) {
+                    start_direct_if_needed(&mut store, &network, &shared, &mut status, endpoint_id)?;
+                }
+                Ok(Some(result))
             }
         }));
         match outcome {
@@ -357,6 +382,37 @@ fn run_worker(
         }
         next_flush = Instant::now();
     }
+}
+
+fn configured_node(store: &Store) -> Option<String> {
+    store.delivery_config().ok().flatten().map(|config| config.node)
+}
+
+fn start_direct_if_needed(
+    store: &mut Store,
+    network: &Network,
+    shared: &Shared,
+    status: &mut NetworkStatus,
+    endpoint_id: [u8; 32],
+) -> Result<()> {
+    let config = match store.delivery_config()? {
+        Some(config) if !config.is_direct() => return Ok(()),
+        Some(config) => config,
+        None => store.configure_direct(endpoint_id)?,
+    };
+    let already = status.node.as_deref() == Some(config.node.as_str())
+        && matches!(status.state, ConnectionState::Connecting | ConnectionState::Online);
+    if !already {
+        *status = NetworkStatus {
+            node: Some(config.node.clone()),
+            state: ConnectionState::Connecting,
+            error: None,
+        };
+        shared.queue.push(Event::NetworkChanged {
+            network: status.clone(),
+        });
+    }
+    network.host_direct(config)
 }
 
 fn finish_command(queue: &EventQueue, request_id: RequestId, result: Result<CommandResult>) {
@@ -407,11 +463,46 @@ fn execute(
             let message = match store.conversation(&conversation_id)?.kind {
                 ConversationKind::SavedMessages => store.insert_text(&conversation_id, text, now_ms())?,
                 ConversationKind::Direct => store.queue_text(identity, &conversation_id, text, now_ms())?,
+                ConversationKind::Group | ConversationKind::Channel => {
+                    store.queue_room_text(identity, &conversation_id, text, now_ms())?
+                }
             };
             queue.push(Event::MessageAdded {
                 message: message.clone(),
             });
             Ok(CommandResult::MessageSaved { message })
+        }
+        Command::EditText {
+            conversation_id,
+            message_id,
+            text,
+        } => {
+            let text = normalize_text(&text)?;
+            let message = store.revise_own(identity, &conversation_id, &message_id, Some(text), now_ms())?;
+            queue.push(Event::MessageAdded {
+                message: message.clone(),
+            });
+            Ok(CommandResult::MessageSaved { message })
+        }
+        Command::DeleteText {
+            conversation_id,
+            message_id,
+        } => {
+            let message = store.revise_own(identity, &conversation_id, &message_id, None, now_ms())?;
+            queue.push(Event::MessageAdded {
+                message: message.clone(),
+            });
+            Ok(CommandResult::MessageSaved { message })
+        }
+        Command::CreateGroup { title, members } => {
+            let conversation = store.create_room(identity, ConversationKind::Group, &title, &members, now_ms())?;
+            queue.push(Event::ContactsChanged);
+            Ok(CommandResult::RoomCreated { conversation })
+        }
+        Command::CreateChannel { title, members } => {
+            let conversation = store.create_room(identity, ConversationKind::Channel, &title, &members, now_ms())?;
+            queue.push(Event::ContactsChanged);
+            Ok(CommandResult::RoomCreated { conversation })
         }
         Command::UpdateProfile { display_name, about } => {
             let (display_name, about) = normalize_profile(&display_name, &about)?;
@@ -421,7 +512,53 @@ fn execute(
             });
             Ok(CommandResult::ProfileUpdated { profile })
         }
+        Command::SetAvatar { image } => {
+            let image = decode_image(&image)?;
+            let profile = store.set_avatar(identity, image, now_ms())?;
+            queue.push(Event::ProfileChanged {
+                profile: profile.clone(),
+            });
+            Ok(CommandResult::ProfileUpdated { profile })
+        }
+        Command::SendVoice {
+            conversation_id,
+            wav_base64,
+        } => {
+            let wav = decode_standard(&wav_base64)?;
+            let message = store.send_voice(identity, &conversation_id, &wav, now_ms())?;
+            queue.push(Event::MessageAdded {
+                message: message.clone(),
+            });
+            Ok(CommandResult::MessageSaved { message })
+        }
+        Command::ReadVoice { message_id } => {
+            let wav = store.read_voice(&message_id)?;
+            Ok(CommandResult::Voice {
+                message_id,
+                wav_base64: encode_standard(&wav),
+            })
+        }
     }
+}
+
+fn decode_image(text: &str) -> Result<Option<Vec<u8>>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(decode_standard(text)?))
+}
+
+fn decode_standard(text: &str) -> Result<Vec<u8>> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(text.trim())
+        .map_err(|_| Error::InvalidArgument("base64".into()))
+}
+
+fn encode_standard(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 pub(crate) fn now_ms() -> i64 {

@@ -8,6 +8,8 @@ fn identity() -> LocalIdentity {
 fn text(message: &Message) -> &str {
     match &message.body {
         MessageBody::Text { text } => text,
+        MessageBody::Deleted => "",
+        MessageBody::VoiceNote { .. } => "",
     }
 }
 
@@ -235,12 +237,62 @@ fn version_1_database_is_upgraded_in_place() {
         // Reproduce a database written by schema version 1.
         let db = Store::account_dir(dir.path(), &identity.public().account_id).join(DATABASE_FILE);
         let conn = Connection::open(db).unwrap();
-        conn.execute_batch("DROP TABLE profile; DROP TABLE delivery_config; DROP TABLE contacts; DROP TABLE invitations; DROP TABLE outbox; DROP TABLE processed_inbox; PRAGMA user_version = 1;")
-            .unwrap();
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS room_members; \
+             DROP TABLE IF EXISTS room_receipts; \
+             DROP TABLE IF EXISTS pending_room_messages; \
+             DROP TABLE IF EXISTS pending_room_ops; \
+             DROP TABLE IF EXISTS rooms; \
+             DROP TABLE IF EXISTS pending_message_ops; \
+             DROP TABLE IF EXISTS voice_incoming; \
+             DROP TABLE IF EXISTS voice_incoming_meta; \
+             DROP TABLE IF EXISTS voice_notes; \
+             ALTER TABLE messages DROP COLUMN revision; \
+             ALTER TABLE messages DROP COLUMN edited_at_ms; \
+             ALTER TABLE messages DROP COLUMN deleted; \
+             DROP TABLE profile; DROP TABLE delivery_config; DROP TABLE contacts; \
+             DROP TABLE invitations; DROP TABLE outbox; DROP TABLE processed_inbox; \
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
     }
     let mut store = Store::open(dir.path(), &identity).unwrap();
     let saved = store.saved_messages_id();
     assert_eq!(store.messages(&saved, None, 10).unwrap().messages, vec![message]);
     assert_eq!(store.profile().unwrap(), None);
     store.update_profile("Upgraded".into(), "".into(), 3).unwrap();
+}
+
+#[test]
+fn saved_message_edit_and_delete_survive_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let identity = identity();
+    let saved;
+    let id;
+    {
+        let mut store = Store::open(dir.path(), &identity).unwrap();
+        saved = store.saved_messages_id();
+        let message = store.insert_text(&saved, "черновик".into(), 1).unwrap();
+        id = message.id;
+        let edited = store
+            .revise_own(&identity, &saved, &id, Some("готово".into()), 2)
+            .unwrap();
+        assert_eq!(text(&edited), "готово");
+        assert_eq!(edited.revision, 1);
+        assert_eq!(edited.edited_at_ms, Some(2));
+        let same = store
+            .revise_own(&identity, &saved, &id, Some("готово".into()), 3)
+            .unwrap();
+        assert_eq!(same.revision, 1);
+        let deleted = store.revise_own(&identity, &saved, &id, None, 4).unwrap();
+        assert!(deleted.deleted);
+        assert_eq!(deleted.body, MessageBody::Deleted);
+        assert!(store.revise_own(&identity, &saved, &id, Some("нет".into()), 5).is_err());
+    }
+    let store = Store::open(dir.path(), &identity).unwrap();
+    let message = store.messages(&saved, None, 10).unwrap().messages.remove(0);
+    assert_eq!(message.id, id);
+    assert!(message.deleted);
+    assert_eq!(message.body, MessageBody::Deleted);
+    assert_eq!(message.revision, 2);
 }

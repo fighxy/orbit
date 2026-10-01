@@ -4,11 +4,13 @@
 //! versioned blob stored by the platform secure store (Keychain, Android
 //! Keystore, desktop keyring). Everything derived from it stays in Rust.
 //!
-//! * The account seed defines the account signing key. Its public key is the
-//!   [`AccountId`]. Backing up and restoring this seed is a later, separately
-//!   specified flow.
-//! * The device seed is random per device and is never derived from the
-//!   account seed, so restoring an account cannot resurrect a revoked device.
+//! * A recovery phrase (24 BIP39 words) is the account. Both the account seed
+//!   and the device seed are derived from its entropy, so entering the phrase
+//!   on a new device restores the same keys and the same direct address.
+//!   Use it only after the previous device is gone: it brings that device
+//!   back, it does not mint a second one. The phrase does not contain chats.
+//! * [`IdentitySecret::generate`] is the older random secret. It has no phrase.
+//!   Its device seed is still not derived from its account seed.
 //! * The account key certifies the device key ([`DeviceCertificate`]).
 //! * The local storage key is derived from the device seed.
 //! * So are the device's inbox key (HPKE, for end-to-end envelopes) and its
@@ -16,6 +18,8 @@
 //!   node cannot link a mailbox to a published identity by key equality.
 
 pub mod passcode;
+
+mod phrase;
 
 use std::fmt;
 
@@ -29,9 +33,17 @@ use crate::domain::{AccountId, DeviceId};
 use crate::error::{Error, Result};
 
 const SECRET_VERSION: u8 = 1;
+const PHRASE_VERSION: u8 = 2;
 const SEED_LEN: usize = 32;
-/// Length of the serialized identity secret, version 1.
+/// Length of a random identity secret, version 1.
 pub const IDENTITY_SECRET_LEN: usize = 1 + 2 * SEED_LEN;
+/// Length of a phrase identity secret: version byte plus 32 entropy bytes.
+const PHRASE_SECRET_LEN: usize = 1 + SEED_LEN;
+
+const PHRASE_ACCOUNT_CONTEXT: &str = "orbit 2026-10-01 phrase account seed v1";
+const PHRASE_DEVICE_CONTEXT: &str = "orbit 2026-10-01 phrase device seed v1";
+/// Direct endpoint key. Stable for a phrase, so a restored device keeps its address.
+pub(crate) const DIRECT_ENDPOINT_CONTEXT: &str = "orbit 2026-10-01 direct endpoint v1";
 
 // BLAKE3 derive_key contexts: hardcoded, unique, versioned.
 const ACCOUNT_SIGNING_CONTEXT: &str = "orbit 2026-10-01 account signing key v1";
@@ -46,6 +58,8 @@ const DEVICE_CERTIFICATE_LABEL: &[u8] = b"orbit/v1/device-certificate\0";
 pub struct IdentitySecret {
     account_seed: Zeroizing<[u8; SEED_LEN]>,
     device_seed: Zeroizing<[u8; SEED_LEN]>,
+    /// Present only for a phrase identity. The words are this entropy.
+    entropy: Option<Zeroizing<[u8; SEED_LEN]>>,
 }
 
 impl IdentitySecret {
@@ -58,30 +72,77 @@ impl IdentitySecret {
         Ok(Self {
             account_seed,
             device_seed,
+            entropy: None,
         })
+    }
+
+    /// New account whose 24-word phrase restores these same keys.
+    pub fn generate_phrase() -> Result<Self> {
+        let mut entropy = Zeroizing::new([0u8; SEED_LEN]);
+        getrandom::fill(entropy.as_mut()).map_err(|_| Error::Random)?;
+        Ok(Self::from_entropy(entropy))
+    }
+
+    /// Restores the account from a 24-word phrase.
+    pub fn from_phrase(text: &str) -> Result<Self> {
+        Ok(Self::from_entropy(Zeroizing::new(phrase::decode(text)?)))
+    }
+
+    /// The 24 words, when this secret was created from a phrase.
+    pub fn recovery_phrase(&self) -> Option<String> {
+        self.entropy.as_ref().map(|entropy| phrase::encode(entropy))
+    }
+
+    pub(crate) fn device_seed(&self) -> &[u8; SEED_LEN] {
+        &self.device_seed
+    }
+
+    fn from_entropy(entropy: Zeroizing<[u8; SEED_LEN]>) -> Self {
+        let account_seed = Zeroizing::new(blake3::derive_key(PHRASE_ACCOUNT_CONTEXT, entropy.as_ref()));
+        let device_seed = Zeroizing::new(blake3::derive_key(PHRASE_DEVICE_CONTEXT, entropy.as_ref()));
+        Self {
+            account_seed,
+            device_seed,
+            entropy: Some(entropy),
+        }
     }
 
     /// Parses a secret produced by [`IdentitySecret::to_bytes`].
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() != IDENTITY_SECRET_LEN || bytes[0] != SECRET_VERSION {
-            return Err(Error::InvalidIdentity);
+        match bytes.first().copied() {
+            Some(SECRET_VERSION) if bytes.len() == IDENTITY_SECRET_LEN => {
+                let mut account_seed = Zeroizing::new([0u8; SEED_LEN]);
+                let mut device_seed = Zeroizing::new([0u8; SEED_LEN]);
+                account_seed.copy_from_slice(&bytes[1..1 + SEED_LEN]);
+                device_seed.copy_from_slice(&bytes[1 + SEED_LEN..]);
+                Ok(Self {
+                    account_seed,
+                    device_seed,
+                    entropy: None,
+                })
+            }
+            Some(PHRASE_VERSION) if bytes.len() == PHRASE_SECRET_LEN => {
+                let mut entropy = Zeroizing::new([0u8; SEED_LEN]);
+                entropy.copy_from_slice(&bytes[1..]);
+                Ok(Self::from_entropy(entropy))
+            }
+            _ => Err(Error::InvalidIdentity),
         }
-        let mut account_seed = Zeroizing::new([0u8; SEED_LEN]);
-        let mut device_seed = Zeroizing::new([0u8; SEED_LEN]);
-        account_seed.copy_from_slice(&bytes[1..1 + SEED_LEN]);
-        device_seed.copy_from_slice(&bytes[1 + SEED_LEN..]);
-        Ok(Self {
-            account_seed,
-            device_seed,
-        })
     }
 
     pub fn to_bytes(&self) -> Zeroizing<Vec<u8>> {
-        let mut out = Zeroizing::new(Vec::with_capacity(IDENTITY_SECRET_LEN));
-        out.push(SECRET_VERSION);
-        out.extend_from_slice(self.account_seed.as_ref());
-        out.extend_from_slice(self.device_seed.as_ref());
-        out
+        if let Some(entropy) = &self.entropy {
+            let mut out = Zeroizing::new(Vec::with_capacity(PHRASE_SECRET_LEN));
+            out.push(PHRASE_VERSION);
+            out.extend_from_slice(entropy.as_ref());
+            out
+        } else {
+            let mut out = Zeroizing::new(Vec::with_capacity(IDENTITY_SECRET_LEN));
+            out.push(SECRET_VERSION);
+            out.extend_from_slice(self.account_seed.as_ref());
+            out.extend_from_slice(self.device_seed.as_ref());
+            out
+        }
     }
 }
 
@@ -315,6 +376,24 @@ mod tests {
         let identity = LocalIdentity::from_secret(&secret);
         let debug = format!("{identity:?}");
         assert!(!debug.contains(&hex::encode(identity.storage_key())));
+    }
+
+    #[test]
+    fn phrase_restores_the_same_keys_and_hides_itself_from_a_random_secret() {
+        let secret = IdentitySecret::generate_phrase().unwrap();
+        let phrase = secret.recovery_phrase().unwrap();
+        assert_eq!(phrase.split_whitespace().count(), 24);
+        let restored = IdentitySecret::from_phrase(&phrase).unwrap();
+        assert_eq!(secret.to_bytes().as_slice(), restored.to_bytes().as_slice());
+        assert_eq!(
+            LocalIdentity::from_secret(&secret).public(),
+            LocalIdentity::from_secret(&restored).public()
+        );
+        let locked = passcode::lock(secret.to_bytes().as_slice(), "phrase-lock").unwrap();
+        let opened = passcode::unlock(&locked, "phrase-lock").unwrap();
+        assert_eq!(opened.as_slice(), secret.to_bytes().as_slice());
+        assert!(IdentitySecret::generate().unwrap().recovery_phrase().is_none());
+        assert!(IdentitySecret::from_phrase("abandon abandon").is_err());
     }
 
     #[test]

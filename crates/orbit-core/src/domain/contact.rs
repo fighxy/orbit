@@ -10,6 +10,9 @@ pub struct Contact {
     pub display_name: String,
     /// Mutual signed-card exchange has completed.
     pub ready: bool,
+    /// Latest profile picture from this contact. Empty when they have not sent one.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "super::b64")]
+    pub avatar: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

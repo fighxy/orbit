@@ -1,6 +1,7 @@
 package com.orbit.sdk.bridge
 
 import com.orbit.sdk.model.ConversationId
+import com.orbit.sdk.model.MessageId
 import com.orbit.sdk.model.ConversationKind
 import com.orbit.sdk.model.MessageBody
 import com.orbit.sdk.model.MessageState
@@ -44,6 +45,23 @@ class ProtocolTest {
         assertEquals(
             """{"type":"send_text","conversation_id":"${id.hex}","text":"привет"}""",
             WireCommand.SendText(id, "привет").toJsonBytes().decodeToString(),
+        )
+        val messageId = MessageId("ab".repeat(16))
+        assertEquals(
+            """{"type":"edit_text","conversation_id":"${id.hex}","message_id":"${messageId.hex}","text":"ещё"}""",
+            WireCommand.EditText(id, messageId, "ещё").toJsonBytes().decodeToString(),
+        )
+        assertEquals(
+            """{"type":"delete_text","conversation_id":"${id.hex}","message_id":"${messageId.hex}"}""",
+            WireCommand.DeleteText(id, messageId).toJsonBytes().decodeToString(),
+        )
+        assertEquals(
+            """{"type":"create_group","title":"кухня","members":["${id.hex}"]}""",
+            WireCommand.CreateGroup("кухня", listOf(id)).toJsonBytes().decodeToString(),
+        )
+        assertEquals(
+            """{"type":"create_channel","title":"новости","members":["${id.hex}"]}""",
+            WireCommand.CreateChannel("новости", listOf(id)).toJsonBytes().decodeToString(),
         )
     }
 

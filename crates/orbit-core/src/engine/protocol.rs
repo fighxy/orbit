@@ -39,17 +39,53 @@ pub enum Command {
         before_seq: Option<u64>,
         limit: u32,
     },
-    /// Stores a text message. In the current stage only the saved-messages
-    /// conversation exists, so nothing is sent to the network.
+    /// Stores a text message. Saved messages stay on this device. A direct
+    /// conversation is sealed and handed to the outbox.
     SendText {
         conversation_id: ConversationId,
         text: String,
+    },
+    /// Replaces the author's own text and seals the change for the contact.
+    EditText {
+        conversation_id: ConversationId,
+        message_id: crate::domain::MessageId,
+        text: String,
+    },
+    /// Removes the author's own text. The peer sees a deletion, not the old text.
+    DeleteText {
+        conversation_id: ConversationId,
+        message_id: crate::domain::MessageId,
+    },
+    /// Pairwise group with the ready direct contacts in `members`.
+    CreateGroup {
+        title: String,
+        members: Vec<ConversationId>,
+    },
+    /// Pairwise channel. Only this device can publish.
+    CreateChannel {
+        title: String,
+        members: Vec<ConversationId>,
     },
     /// Sets the local profile. The name is required; `about` may be empty.
     UpdateProfile {
         display_name: String,
         #[serde(default)]
         about: String,
+    },
+    /// Sets or clears the profile picture. `image` is standard base64.
+    /// Empty clears it. JPEG or PNG, at most 32 KiB.
+    SetAvatar {
+        image: String,
+    },
+    /// Sends a voice note. `wav_base64` is a 16 kHz mono 16-bit PCM WAV,
+    /// at most 60 seconds. Not a live room and not a video circle.
+    SendVoice {
+        conversation_id: ConversationId,
+        wav_base64: String,
+    },
+    /// Returns the stored WAV for a voice note.
+    ReadVoice {
+        message_id: crate::domain::MessageId,
     },
 }
 
@@ -83,6 +119,13 @@ pub enum CommandResult {
     },
     ProfileUpdated {
         profile: Profile,
+    },
+    RoomCreated {
+        conversation: Conversation,
+    },
+    Voice {
+        message_id: crate::domain::MessageId,
+        wav_base64: String,
     },
 }
 

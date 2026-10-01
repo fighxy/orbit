@@ -9,7 +9,7 @@
 // Version of the native contract: C functions, JNI methods and the JSON
 // protocol. Bumped on any incompatible change; the SDK refuses to start on a
 // mismatch.
-#define ORBIT_ABI_VERSION 3
+#define ORBIT_ABI_VERSION 6
 
 #define ORBIT_OK 0
 

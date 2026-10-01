@@ -8,6 +8,7 @@ use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
 use super::cipher::SealedBody;
+use super::voice;
 use super::{Store, StoredMessage};
 use crate::domain::{
     AccountId, Contact, ConversationId, ConversationKind, DeviceId, InvitePreview, Message, MessageBody, MessageId,
@@ -24,6 +25,15 @@ pub(crate) struct DeliveryConfig {
     pub node: String,
     pub token: DepositToken,
     pub registered: bool,
+}
+
+impl DeliveryConfig {
+    /// Bare endpoint id: the device is reachable without a mailbox node.
+    pub(crate) fn is_direct(&self) -> bool {
+        self.node
+            .parse::<NodeAddress>()
+            .is_ok_and(|address| address.addrs.is_empty())
+    }
 }
 
 #[derive(Debug)]
@@ -58,6 +68,9 @@ impl Store {
         let node: NodeAddress = node
             .parse()
             .map_err(|_| Error::InvalidArgument("invalid node address".into()))?;
+        if node.addrs.is_empty() {
+            return Err(Error::InvalidArgument("node address needs a reachable socket".into()));
+        }
         let node = node.to_string();
         let config = match self.delivery_config()? {
             Some(mut old) => {
@@ -82,6 +95,21 @@ impl Store {
                 token: DepositToken::generate().map_err(|_| Error::Random)?,
                 registered: false,
             },
+        };
+        self.save_delivery_config(&config)?;
+        Ok(config)
+    }
+
+    /// Starts direct delivery. A bare endpoint id needs no registration code.
+    /// An existing mailbox configuration is left as it is.
+    pub(crate) fn configure_direct(&mut self, endpoint_id: [u8; 32]) -> Result<DeliveryConfig> {
+        if let Some(config) = self.delivery_config()? {
+            return Ok(config);
+        }
+        let config = DeliveryConfig {
+            node: hex::encode(endpoint_id),
+            token: DepositToken::generate().map_err(|_| Error::Random)?,
+            registered: true,
         };
         self.save_delivery_config(&config)?;
         Ok(config)
@@ -200,12 +228,13 @@ impl Store {
                     device_id: DeviceId::from_bytes(card.identity.device),
                     display_name: card.display_name,
                     ready,
+                    avatar: self.contact_avatar(id)?,
                 })
             })
             .transpose()
     }
 
-    fn contact_card(&self, id: &ConversationId) -> Result<Option<(ContactCard, bool)>> {
+    pub(super) fn contact_card(&self, id: &ConversationId) -> Result<Option<(ContactCard, bool)>> {
         let row = self
             .conn
             .query_row(
@@ -219,6 +248,82 @@ impl Store {
                 .map(|card| (card, ready))
         })
         .transpose()
+    }
+
+    fn contact_avatar(&self, id: &ConversationId) -> Result<Option<Vec<u8>>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT avatar FROM contacts WHERE conversation_id=?1",
+                [id.as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten())
+    }
+
+    /// Stores a JPEG or PNG, or clears it. Ready contacts receive a copy.
+    pub(crate) fn set_avatar(
+        &mut self,
+        identity: &LocalIdentity,
+        image: Option<Vec<u8>>,
+        now: i64,
+    ) -> Result<crate::domain::Profile> {
+        if self.profile()?.is_none() {
+            return Err(Error::NotFound("profile"));
+        }
+        if let Some(bytes) = &image
+            && !orbit_protocol::envelope::valid_avatar(bytes)
+        {
+            return Err(Error::InvalidArgument("avatar".into()));
+        }
+        let ready = self.ready_cards()?;
+        let payload_image = image.clone().unwrap_or_default();
+        let mut jobs = Vec::with_capacity(ready.len());
+        for (id, card) in &ready {
+            let job = MessageId::random()?;
+            let envelope = seal(
+                identity,
+                card,
+                now,
+                &Payload::Avatar {
+                    image: payload_image.clone(),
+                },
+            )?;
+            let route = self.seal_record("route", job.as_bytes(), card)?;
+            jobs.push((job, *id, envelope, route));
+        }
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let blob: Option<&[u8]> = image.as_deref();
+        let changed = tx.execute("UPDATE profile SET avatar=?1 WHERE id=1", params![blob])?;
+        if changed == 0 {
+            return Err(Error::NotFound("profile"));
+        }
+        for (job, id, envelope, route) in &jobs {
+            insert_outbox(&tx, job, id, None, envelope, route)?;
+        }
+        tx.commit()?;
+        self.profile()?.ok_or(Error::Internal("profile"))
+    }
+
+    fn ready_cards(&self) -> Result<Vec<(ConversationId, ContactCard)>> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT conversation_id, nonce, ciphertext FROM contacts WHERE ready=1")?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id_bytes, nonce, ciphertext) = row?;
+            let id = ConversationId::from_slice(&id_bytes).map_err(|_| Error::Corrupted("contact id"))?;
+            out.push((id, self.read_record("contact", id.as_bytes(), &nonce, &ciphertext)?));
+        }
+        Ok(out)
     }
 
     pub(crate) fn accept_invite(&mut self, identity: &LocalIdentity, text: &str, now: i64) -> Result<Contact> {
@@ -295,7 +400,110 @@ impl Store {
             created_at_ms: now,
             body,
             state: MessageState::Queued,
+            revision: 0,
+            edited_at_ms: None,
+            deleted: false,
         })
+    }
+
+    /// Edits or deletes a message this device authored. `text == None` deletes.
+    /// A direct change is sealed into the outbox; saved messages stay local.
+    pub(crate) fn revise_own(
+        &mut self,
+        identity: &LocalIdentity,
+        conversation: &ConversationId,
+        message_id: &MessageId,
+        text: Option<String>,
+        now: i64,
+    ) -> Result<Message> {
+        let current = self.message(message_id)?;
+        if current.conversation_id != *conversation {
+            return Err(Error::NotFound("message"));
+        }
+        if current.author_device != self.device_id || current.author_account != self.account_id {
+            return Err(Error::InvalidArgument("only the author can change this message".into()));
+        }
+        if current.deleted {
+            return if text.is_none() {
+                Ok(current)
+            } else {
+                Err(Error::InvalidArgument("message is deleted".into()))
+            };
+        }
+        if text.is_some() && !matches!(current.body, MessageBody::Text { .. }) {
+            return Err(Error::InvalidArgument("only a text message can be edited".into()));
+        }
+        if let (Some(next), MessageBody::Text { text: previous }) = (&text, &current.body)
+            && next == previous
+        {
+            return Ok(current);
+        }
+        let revision = current
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| Error::InvalidArgument("message can no longer be changed".into()))?;
+        let deleted = text.is_none();
+        let body = match &text {
+            Some(value) => MessageBody::Text { text: value.clone() },
+            None => MessageBody::Deleted,
+        };
+        let sealed = seal_body(self, message_id, conversation, &body)?;
+        let kind = self.conversation(conversation)?.kind;
+        let fanout = match kind {
+            ConversationKind::Direct => {
+                let (card, _) = self.contact_card(conversation)?.ok_or(Error::NotFound("contact"))?;
+                let payload = match &text {
+                    Some(value) => Payload::EditText {
+                        message_id: *message_id.as_bytes(),
+                        revision,
+                        text: value.clone(),
+                    },
+                    None => Payload::DeleteText {
+                        message_id: *message_id.as_bytes(),
+                        revision,
+                    },
+                };
+                let job = MessageId::random()?;
+                vec![(
+                    job,
+                    seal(identity, &card, now, &payload)?,
+                    self.seal_record("route", job.as_bytes(), &card)?,
+                )]
+            }
+            ConversationKind::Group | ConversationKind::Channel => {
+                self.room_revision_envelopes(identity, conversation, message_id, revision, text.as_deref(), now)?
+            }
+            ConversationKind::SavedMessages => Vec::new(),
+        };
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let updated = apply_revision(
+            &tx,
+            &RevisionWrite {
+                id: *message_id,
+                sealed,
+                revision,
+                edited_at_ms: now,
+                deleted,
+                author_account: self.account_id,
+                author_device: self.device_id,
+            },
+        )?;
+        if !updated {
+            return Err(Error::InvalidArgument("message can no longer be changed".into()));
+        }
+        if deleted {
+            tx.execute(
+                "DELETE FROM voice_notes WHERE message_id=?1",
+                [message_id.as_bytes().as_slice()],
+            )?;
+        }
+        for (job, envelope, route) in &fanout {
+            // The outbox id differs from the message id, so depositing an edit does not
+            // mark the original text as stored.
+            insert_outbox(&tx, job, conversation, Some(message_id), envelope, route)?;
+        }
+        tx.commit()?;
+        self.message(message_id)
     }
 
     /// Sends text only after the mutually authenticated contact exchange. Handshake
@@ -303,8 +511,10 @@ impl Store {
     pub(crate) fn outbox(&self, limit: u32) -> Result<Vec<OutboxItem>> {
         let mut statement = self.conn.prepare(
             "SELECT o.id, o.envelope, o.route_nonce, o.route_ciphertext FROM outbox o
-            JOIN contacts c ON c.conversation_id=o.conversation_id
-            WHERE o.message_id IS NULL OR c.ready=1 ORDER BY o.rowid LIMIT ?1",
+            LEFT JOIN contacts c ON c.conversation_id = o.conversation_id
+            LEFT JOIN rooms r ON r.conversation_id = o.conversation_id
+            WHERE o.message_id IS NULL OR c.ready = 1 OR r.conversation_id IS NOT NULL
+            ORDER BY o.rowid LIMIT ?1",
         )?;
         let rows = statement.query_map([limit], |r| {
             Ok((
@@ -337,13 +547,24 @@ impl Store {
             .optional()?
             .flatten();
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(ref message_id) = message_id {
+        // Only the original text envelope uses the message id as its outbox id.
+        // Edits share the message id and must not mark that text as stored.
+        if let Some(ref message_id) = message_id
+            && message_id.as_slice() == id.as_bytes()
+        {
             tx.execute(
                 "UPDATE messages SET state='mailbox' WHERE id=?1 AND state='queued'",
                 [message_id],
             )?;
         }
         tx.execute("DELETE FROM outbox WHERE id=?1", [id.as_bytes().as_slice()])?;
+        if let Some(ref message_id) = message_id {
+            tx.execute(
+                "UPDATE messages SET state='mailbox' WHERE id=?1 AND state='queued' \
+                 AND NOT EXISTS (SELECT 1 FROM outbox WHERE message_id=?1)",
+                [message_id],
+            )?;
+        }
         tx.commit()?;
         message_id
             .map(|id| self.message(&MessageId::from_slice(&id).map_err(|_| Error::Corrupted("outbox message id"))?))
@@ -351,13 +572,16 @@ impl Store {
     }
 
     fn message(&self, id: &MessageId) -> Result<Message> {
-        let row = self.conn.query_row(
-            "SELECT seq,id,conversation_id,author_account,author_device,created_at_ms,
-            body_nonce,body_ciphertext,state FROM messages WHERE id=?1",
-            [id.as_bytes().as_slice()],
-            StoredMessage::from_row,
-        )?;
-        self.decode(row)
+        self.lookup_message(id)?.ok_or(Error::NotFound("message"))
+    }
+
+    pub(super) fn lookup_message(&self, id: &MessageId) -> Result<Option<Message>> {
+        let sql = format!("SELECT {} FROM messages WHERE id=?1", super::MESSAGE_COLUMNS);
+        let row = self
+            .conn
+            .query_row(&sql, [id.as_bytes().as_slice()], StoredMessage::from_row)
+            .optional()?;
+        row.map(|row| self.decode(row)).transpose()
     }
 
     pub(crate) fn reject_item(&mut self, id: &ItemId) -> Result<()> {
@@ -391,6 +615,15 @@ impl Store {
         let mut received = None;
         let mut delivered = Vec::new();
         let mut reply = None;
+        let mut revision_plan = None;
+        let mut message_conversation = None;
+        let mut reply_conversation = None;
+        let mut welcome = None;
+        let mut hold_text = None;
+        let mut hold_edit = None;
+        let mut room_receipts = Vec::new();
+        let mut avatar_update = None;
+        let mut voice_effect = None;
         match opened.payload {
             Payload::ContactRequest { invite_id, card } => {
                 self.check_card(&card)?;
@@ -426,21 +659,13 @@ impl Store {
                 }
                 let id = MessageId::from_bytes(message_id);
                 let text = normalize_text(&text)?;
-                if let Some(old) = self
-                    .conn
-                    .query_row(
-                        "SELECT seq,id,conversation_id,author_account,author_device,created_at_ms,
-                    body_nonce,body_ciphertext,state FROM messages WHERE id=?1",
-                        [id.as_bytes().as_slice()],
-                        StoredMessage::from_row,
-                    )
-                    .optional()?
-                {
-                    let old = self.decode(old)?;
-                    if old.conversation_id != conversation
-                        || old.author_device.as_bytes() != &opened.sender.device
-                        || old.body != (MessageBody::Text { text: text.clone() })
-                    {
+                if let Some(old) = self.lookup_message(&id)? {
+                    let same_author = old.conversation_id == conversation
+                        && old.author_device.as_bytes() == &opened.sender.device
+                        && old.author_account.as_bytes() == &opened.sender.account;
+                    let same_text = old.body == (MessageBody::Text { text: text.clone() });
+                    // A later edit keeps the id. Replaying the original text must not quarantine it.
+                    if !same_author || (!same_text && old.revision == 0 && !old.deleted) {
                         return Err(Error::InvalidArgument("conflicting message id".into()));
                     }
                 } else {
@@ -459,13 +684,174 @@ impl Store {
                 ));
             }
             Payload::Delivered { message_ids } => {
+                let ids = message_ids.into_iter().map(MessageId::from_bytes).collect::<Vec<_>>();
+                match &existing {
+                    Some((card, _)) if card.identity == opened.sender => delivered = ids.clone(),
+                    Some(_) => {
+                        return Err(Error::InvalidArgument("receipt is not from the pinned contact".into()));
+                    }
+                    None => {}
+                }
+                room_receipts = self.room_receipts_for(&opened.sender, &ids)?;
+                if delivered.is_empty() && room_receipts.is_empty() {
+                    return Err(Error::InvalidArgument("receipt is not from a member".into()));
+                }
+            }
+            Payload::RoomWelcome {
+                room_id,
+                kind,
+                title,
+                members,
+            } => {
+                welcome = self.plan_welcome(
+                    identity,
+                    &opened.sender,
+                    super::rooms::IncomingWelcome {
+                        room_id,
+                        kind,
+                        title,
+                        members,
+                    },
+                    now,
+                )?;
+            }
+            Payload::RoomText {
+                room_id,
+                message_id,
+                text,
+            } => match self.plan_room_text(&opened.sender, opened.sent_at_ms, room_id, message_id, &text)? {
+                super::rooms::RoomTextPlan::Incoming(incoming) => {
+                    let incoming = *incoming;
+                    message_conversation = Some(incoming.conversation);
+                    if let Some(sealed) = incoming.sealed {
+                        received = Some((incoming.id, sealed));
+                    }
+                    if let Some(reply_to) = incoming.reply {
+                        reply_conversation = Some(incoming.conversation);
+                        reply = Some(reply_to);
+                    }
+                }
+                super::rooms::RoomTextPlan::Hold(held) => hold_text = Some(held),
+            },
+            Payload::RoomEditText {
+                room_id,
+                message_id,
+                revision,
+                text,
+            } => {
+                message_conversation = Some(ConversationId::from_bytes(room_id));
+                match self.plan_room_revision(
+                    &opened.sender,
+                    opened.sent_at_ms,
+                    room_id,
+                    message_id,
+                    revision,
+                    Some(text),
+                )? {
+                    super::rooms::RoomRevisionPlan::Now(plan) => revision_plan = plan,
+                    super::rooms::RoomRevisionPlan::Later(held) => hold_edit = Some(held),
+                }
+            }
+            Payload::RoomDeleteText {
+                room_id,
+                message_id,
+                revision,
+            } => {
+                message_conversation = Some(ConversationId::from_bytes(room_id));
+                match self.plan_room_revision(&opened.sender, opened.sent_at_ms, room_id, message_id, revision, None)? {
+                    super::rooms::RoomRevisionPlan::Now(plan) => revision_plan = plan,
+                    super::rooms::RoomRevisionPlan::Later(held) => hold_edit = Some(held),
+                }
+            }
+            Payload::EditText {
+                message_id,
+                revision,
+                text,
+            } => {
+                revision_plan = self.plan_revision(RevisionRequest {
+                    conversation: &conversation,
+                    existing: existing.as_ref(),
+                    sender: &opened.sender,
+                    message_id,
+                    revision,
+                    text: Some(text),
+                    edited_at_ms: opened.sent_at_ms,
+                })?;
+            }
+            Payload::DeleteText { message_id, revision } => {
+                revision_plan = self.plan_revision(RevisionRequest {
+                    conversation: &conversation,
+                    existing: existing.as_ref(),
+                    sender: &opened.sender,
+                    message_id,
+                    revision,
+                    text: None,
+                    edited_at_ms: opened.sent_at_ms,
+                })?;
+            }
+            Payload::Avatar { image } => {
                 let (card, _) = existing.as_ref().ok_or(Error::NotFound("contact"))?;
                 if card.identity != opened.sender {
-                    return Err(Error::InvalidArgument("receipt is not from the pinned contact".into()));
+                    return Err(Error::InvalidArgument("sender is not the pinned contact".into()));
                 }
-                delivered = message_ids.into_iter().map(MessageId::from_bytes).collect();
+                if !image.is_empty() && !orbit_protocol::envelope::valid_avatar(&image) {
+                    return Err(Error::InvalidArgument("avatar".into()));
+                }
+                avatar_update = Some(image);
+            }
+            Payload::MediaStart {
+                message_id,
+                duration_ms,
+                byte_len,
+                sha256,
+                chunk_count,
+                waveform,
+            } => {
+                voice_effect = Some(self.plan_voice_start(
+                    &opened.sender,
+                    &conversation,
+                    opened.sent_at_ms,
+                    voice::VoiceStart {
+                        message_id,
+                        duration_ms,
+                        byte_len,
+                        sha256,
+                        chunk_count,
+                        waveform,
+                    },
+                )?);
+            }
+            Payload::MediaChunk {
+                message_id,
+                index,
+                bytes,
+            } => {
+                voice_effect = Some(self.plan_voice_chunk(&opened.sender, &conversation, message_id, index, bytes)?);
             }
         }
+        if let Some(effect) = &voice_effect
+            && effect.receipt
+            && let Some((card, _)) = existing.as_ref()
+        {
+            reply = Some((
+                card.clone(),
+                Payload::Delivered {
+                    message_ids: vec![*effect.id.as_bytes()],
+                },
+            ));
+        }
+        let becoming_ready = card_change.is_some() && existing.as_ref().is_none_or(|(_, ready)| !ready);
+        let avatar_share = if becoming_ready
+            && let (Some(card), Some(profile)) = (card_change.as_ref(), self.profile()?)
+            && let Some(image) = profile.avatar
+        {
+            let job = MessageId::random()?;
+            let envelope = seal(identity, card, now, &Payload::Avatar { image })?;
+            let route = self.seal_record("route", job.as_bytes(), card)?;
+            Some((job, envelope, route))
+        } else {
+            None
+        };
         let sealed_card = card_change
             .as_ref()
             .map(|c| self.seal_record("contact", conversation.as_bytes(), c))
@@ -483,17 +869,60 @@ impl Store {
                 ))
             })
             .transpose()?;
+        let voice_wav = if let Some(effect) = voice_effect.as_mut()
+            && let Some(finish) = effect.finish.take()
+        {
+            received = Some((finish.id, finish.sealed));
+            Some((finish.id, finish.wav))
+        } else {
+            None
+        };
+        let stored_in = message_conversation.unwrap_or(conversation);
         let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let (Some(card), Some(sealed)) = (&card_change, &sealed_card) {
             insert_contact(&tx, &conversation, card, sealed, true, now)?;
         }
+        if let Some((job, envelope, route)) = &avatar_share {
+            insert_outbox(&tx, job, &conversation, None, envelope, route)?;
+        }
+        let mut avatar_applied = false;
+        if let Some(image) = &avatar_update {
+            let blob: Option<&[u8]> = if image.is_empty() { None } else { Some(image.as_slice()) };
+            let changed = tx.execute(
+                "UPDATE contacts SET avatar=?1, avatar_updated_at_ms=?2 WHERE conversation_id=?3 \
+                 AND (avatar_updated_at_ms IS NULL OR avatar_updated_at_ms < ?2)",
+                params![blob, opened.sent_at_ms, conversation.as_bytes().as_slice()],
+            )?;
+            avatar_applied = changed > 0;
+        }
+        if let Some(effect) = &voice_effect {
+            voice::write_effect(&tx, effect)?;
+        }
+        if let Some((id, wav)) = &voice_wav {
+            voice::store_wav(&tx, id, wav)?;
+            voice::clear_incoming(&tx, id)?;
+        }
+        let mut flushed = Vec::new();
+        if let Some(welcome) = &welcome {
+            super::rooms::insert_welcome(&tx, welcome)?;
+            let devices: Vec<[u8; 32]> = welcome.members.iter().map(|member| member.device).collect();
+            flushed = super::rooms::flush_pending(&tx, &welcome.conversation, &devices)?;
+        }
+        if let Some(held) = &hold_text {
+            super::rooms::insert_held_text(&tx, held)?;
+        }
+        if let Some(held) = &hold_edit {
+            super::rooms::insert_held_edit(&tx, held)?;
+        }
+        let author_account = AccountId::from_bytes(opened.sender.account);
+        let author_device = DeviceId::from_bytes(opened.sender.device);
         let received_id = if let Some((id, sealed)) = received {
             insert_message(
                 &tx,
                 &id,
-                &conversation,
-                &AccountId::from_bytes(opened.sender.account),
-                &DeviceId::from_bytes(opened.sender.device),
+                &stored_in,
+                &author_account,
+                &author_device,
                 opened.sent_at_ms,
                 &sealed,
                 MessageState::Received,
@@ -502,7 +931,23 @@ impl Store {
         } else {
             None
         };
+        if let Some(id) = &received_id {
+            promote_pending(&tx, id, &author_account, &author_device)?;
+            super::rooms::apply_held_room_edit(&tx, id, &author_account, &author_device)?;
+            voice::forget_if_deleted(&tx, id)?;
+        }
         let mut changed_ids = Vec::new();
+        if let Some(plan) = revision_plan {
+            match plan {
+                IncomingRevision::Apply(write) => {
+                    if apply_revision(&tx, &write)? {
+                        changed_ids.push(write.id);
+                        voice::forget_if_deleted(&tx, &write.id)?;
+                    }
+                }
+                IncomingRevision::Hold(write) => hold_revision(&tx, &stored_in, &write)?,
+            }
+        }
         for id in delivered {
             let changed = tx.execute("UPDATE messages SET state='delivered' WHERE id=?1 AND conversation_id=?2 AND author_device=?3 AND state IN ('queued','mailbox')",
                 params![id.as_bytes().as_slice(), conversation.as_bytes().as_slice(), self.device_id.as_bytes().as_slice()])?;
@@ -510,8 +955,14 @@ impl Store {
                 changed_ids.push(id);
             }
         }
+        for id in &room_receipts {
+            if super::rooms::note_receipt(&tx, id, &opened.sender.device, self.device_id.as_bytes())? {
+                changed_ids.push(*id);
+            }
+        }
         if let Some((envelope, route)) = reply {
-            insert_outbox(&tx, &job_id, &conversation, None, &envelope, &route)?;
+            let reply_in = reply_conversation.unwrap_or(conversation);
+            insert_outbox(&tx, &job_id, &reply_in, None, &envelope, &route)?;
         }
         tx.execute(
             "INSERT OR IGNORE INTO processed_inbox (id,accepted) VALUES (?1,1)",
@@ -521,18 +972,91 @@ impl Store {
         if let Some(id) = received_id {
             changed_ids.push(id);
         }
+        changed_ids.extend(flushed);
         Ok(InboxChanges {
             messages: changed_ids.iter().map(|id| self.message(id)).collect::<Result<_>>()?,
-            contacts_changed: card_change.is_some(),
+            contacts_changed: card_change.is_some() || welcome.is_some() || avatar_applied,
         })
     }
 
-    fn seal_record<T: Serialize>(&self, purpose: &str, id: &[u8], value: &T) -> Result<SealedBody> {
+    fn plan_revision(&self, request: RevisionRequest<'_>) -> Result<Option<IncomingRevision>> {
+        let RevisionRequest {
+            conversation,
+            existing,
+            sender,
+            message_id,
+            revision,
+            text,
+            edited_at_ms,
+        } = request;
+        let (card, _) = existing.ok_or(Error::NotFound("contact"))?;
+        if &card.identity != sender {
+            return Err(Error::InvalidArgument("sender is not the pinned contact".into()));
+        }
+        self.plan_body_revision(super::rooms::BodyRevision {
+            conversation,
+            sender,
+            message_id,
+            revision,
+            text,
+            edited_at_ms,
+        })
+    }
+
+    pub(super) fn plan_body_revision(
+        &self,
+        request: super::rooms::BodyRevision<'_>,
+    ) -> Result<Option<IncomingRevision>> {
+        let super::rooms::BodyRevision {
+            conversation,
+            sender,
+            message_id,
+            revision,
+            text,
+            edited_at_ms,
+        } = request;
+        if revision == 0 {
+            return Ok(None);
+        }
+        let text = text.as_deref().map(normalize_text).transpose()?;
+        let id = MessageId::from_bytes(message_id);
+        let deleted = text.is_none();
+        let body = match &text {
+            Some(value) => MessageBody::Text { text: value.clone() },
+            None => MessageBody::Deleted,
+        };
+        let write = RevisionWrite {
+            id,
+            sealed: seal_body(self, &id, conversation, &body)?,
+            revision,
+            edited_at_ms,
+            deleted,
+            author_account: AccountId::from_bytes(sender.account),
+            author_device: DeviceId::from_bytes(sender.device),
+        };
+        match self.lookup_message(&id)? {
+            Some(old) => {
+                if old.conversation_id != *conversation
+                    || old.author_account.as_bytes() != write.author_account.as_bytes()
+                    || old.author_device.as_bytes() != write.author_device.as_bytes()
+                {
+                    return Err(Error::InvalidArgument("conflicting message id".into()));
+                }
+                if old.deleted || revision <= old.revision {
+                    return Ok(None);
+                }
+                Ok(Some(IncomingRevision::Apply(write)))
+            }
+            None => Ok(Some(IncomingRevision::Hold(write))),
+        }
+    }
+
+    pub(super) fn seal_record<T: Serialize>(&self, purpose: &str, id: &[u8], value: &T) -> Result<SealedBody> {
         let bytes = zeroize::Zeroizing::new(serde_json::to_vec(value).map_err(|_| Error::Internal("record encoding"))?);
         self.cipher.seal_record(purpose, id, &bytes)
     }
 
-    fn read_record<T: serde::de::DeserializeOwned>(
+    pub(super) fn read_record<T: serde::de::DeserializeOwned>(
         &self,
         purpose: &str,
         id: &[u8],
@@ -544,6 +1068,150 @@ impl Store {
     }
 }
 
+pub(super) struct RevisionWrite {
+    id: MessageId,
+    sealed: SealedBody,
+    revision: u32,
+    edited_at_ms: i64,
+    deleted: bool,
+    author_account: AccountId,
+    author_device: DeviceId,
+}
+
+pub(super) enum IncomingRevision {
+    Apply(RevisionWrite),
+    /// The text is not stored yet. Kept until that message arrives.
+    Hold(RevisionWrite),
+}
+
+struct RevisionRequest<'a> {
+    conversation: &'a ConversationId,
+    existing: Option<&'a (ContactCard, bool)>,
+    sender: &'a orbit_protocol::envelope::DeviceIdentity,
+    message_id: [u8; 16],
+    revision: u32,
+    text: Option<String>,
+    edited_at_ms: i64,
+}
+
+pub(super) fn seal_body(
+    store: &Store,
+    id: &MessageId,
+    conversation: &ConversationId,
+    body: &MessageBody,
+) -> Result<SealedBody> {
+    let bytes = zeroize::Zeroizing::new(serde_json::to_vec(body).map_err(|_| Error::Internal("body encoding"))?);
+    store.cipher.seal(id, conversation, &bytes)
+}
+
+fn apply_revision(tx: &Transaction<'_>, write: &RevisionWrite) -> Result<bool> {
+    let changed = tx.execute(
+        "UPDATE messages SET body_nonce=?1, body_ciphertext=?2, revision=?3, edited_at_ms=?4, deleted=?5 \
+         WHERE id=?6 AND author_account=?7 AND author_device=?8 AND deleted=0 AND revision < ?3",
+        params![
+            write.sealed.nonce.as_slice(),
+            write.sealed.ciphertext,
+            i64::from(write.revision),
+            write.edited_at_ms,
+            i64::from(write.deleted),
+            write.id.as_bytes().as_slice(),
+            write.author_account.as_bytes().as_slice(),
+            write.author_device.as_bytes().as_slice(),
+        ],
+    )?;
+    tx.execute(
+        "DELETE FROM pending_message_ops WHERE message_id=?1",
+        [write.id.as_bytes().as_slice()],
+    )?;
+    Ok(changed > 0)
+}
+
+fn hold_revision(tx: &Transaction<'_>, conversation: &ConversationId, write: &RevisionWrite) -> Result<()> {
+    let exists: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pending_message_ops WHERE message_id=?1)",
+        [write.id.as_bytes().as_slice()],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        let count: i64 = tx.query_row("SELECT count(*) FROM pending_message_ops", [], |row| row.get(0))?;
+        if count >= 64 {
+            return Ok(());
+        }
+    }
+    tx.execute(
+        "INSERT INTO pending_message_ops \
+            (message_id, conversation_id, author_account, author_device, revision, deleted, edited_at_ms, body_nonce, body_ciphertext) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) \
+         ON CONFLICT(message_id) DO UPDATE SET \
+            conversation_id=excluded.conversation_id, \
+            author_account=excluded.author_account, \
+            author_device=excluded.author_device, \
+            revision=excluded.revision, \
+            deleted=excluded.deleted, \
+            edited_at_ms=excluded.edited_at_ms, \
+            body_nonce=excluded.body_nonce, \
+            body_ciphertext=excluded.body_ciphertext \
+         WHERE excluded.revision > pending_message_ops.revision",
+        params![
+            write.id.as_bytes().as_slice(),
+            conversation.as_bytes().as_slice(),
+            write.author_account.as_bytes().as_slice(),
+            write.author_device.as_bytes().as_slice(),
+            i64::from(write.revision),
+            i64::from(write.deleted),
+            write.edited_at_ms,
+            write.sealed.nonce.as_slice(),
+            write.sealed.ciphertext,
+        ],
+    )?;
+    Ok(())
+}
+
+fn promote_pending(tx: &Transaction<'_>, id: &MessageId, account: &AccountId, device: &DeviceId) -> Result<()> {
+    let row = tx
+        .query_row(
+            "SELECT revision, deleted, edited_at_ms, body_nonce, body_ciphertext, author_account, author_device \
+             FROM pending_message_ops WHERE message_id=?1",
+            [id.as_bytes().as_slice()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                    row.get::<_, Vec<u8>>(5)?,
+                    row.get::<_, Vec<u8>>(6)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((revision, deleted, edited_at, nonce, ciphertext, author_account, author_device)) = row else {
+        return Ok(());
+    };
+    if author_account.as_slice() == account.as_bytes() && author_device.as_slice() == device.as_bytes() {
+        tx.execute(
+            "UPDATE messages SET body_nonce=?1, body_ciphertext=?2, revision=?3, edited_at_ms=?4, deleted=?5 \
+             WHERE id=?6 AND author_account=?7 AND author_device=?8 AND deleted=0 AND revision < ?3",
+            params![
+                nonce,
+                ciphertext,
+                revision,
+                edited_at,
+                deleted,
+                id.as_bytes().as_slice(),
+                account.as_bytes().as_slice(),
+                device.as_bytes().as_slice(),
+            ],
+        )?;
+    }
+    tx.execute(
+        "DELETE FROM pending_message_ops WHERE message_id=?1",
+        [id.as_bytes().as_slice()],
+    )?;
+    Ok(())
+}
+
 fn check_pinned(existing: Option<&(ContactCard, bool)>, card: &ContactCard) -> Result<()> {
     if let Some((old, _)) = existing
         && (old.identity != card.identity || old.inbox_key != card.inbox_key)
@@ -553,7 +1221,7 @@ fn check_pinned(existing: Option<&(ContactCard, bool)>, card: &ContactCard) -> R
     Ok(())
 }
 
-fn seal(identity: &LocalIdentity, card: &ContactCard, now: i64, payload: &Payload) -> Result<Vec<u8>> {
+pub(super) fn seal(identity: &LocalIdentity, card: &ContactCard, now: i64, payload: &Payload) -> Result<Vec<u8>> {
     envelope::seal(
         identity.device_key(),
         &identity.public().to_device_identity(),
@@ -593,7 +1261,7 @@ fn insert_contact(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn insert_message(
+pub(super) fn insert_message(
     tx: &Transaction<'_>,
     id: &MessageId,
     conversation: &ConversationId,
@@ -608,7 +1276,7 @@ fn insert_message(
     Ok(())
 }
 
-fn insert_outbox(
+pub(super) fn insert_outbox(
     tx: &Transaction<'_>,
     id: &MessageId,
     conversation: &ConversationId,
