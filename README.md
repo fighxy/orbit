@@ -24,7 +24,12 @@ messenger client on the Rust core.
 | C ABI (generated `orbit.h`) and JNI; Kotlin SDK over both | C smoke test, JVM integration tests |
 | Compose UI: onboarding (profile, passcode), lock screen, chat list, "Saved messages" chat with history paging, settings | Desktop run under Xvfb; Android debug APK build |
 
-Not implemented yet: networking, contacts and invitations, E2EE between
+Backend: `orbit-node` runs a store-and-forward mailbox over QUIC (Iroh) with owner
+authentication, deposit tokens, TTL and quotas; verified by end-to-end tests over
+localhost and by running the node and `orbit-cli` as separate processes. Clients are
+not connected to it yet.
+
+Not implemented yet: client networking, contacts and invitations, E2EE between
 devices, groups, channels, voice, attachments, backup and restore. The app does
 not request network access. The iOS bridge, Keychain store and Xcode host build in CI
 on macOS but have not run on a simulator or device yet.
@@ -85,11 +90,13 @@ and media E2EE are separate integration requirements.
 | `client/` | Implemented (stage 0) | Shared Compose UI and state holders |
 | `apps/desktop/`, `apps/android/` | Implemented (stage 0) | JVM desktop and Android entry points |
 | `apps/ios/` | Implemented, not run on a device | XcodeGen host showing `MainViewController()` from the `OrbitClient` framework |
+| `crates/orbit-protocol/`, `crates/orbit-transport/` | Implemented (mailbox) | Wire protocol types; QUIC client over Iroh |
+| `services/orbit-node/` | Implemented (mailbox) | Node: store-and-forward mailbox with TTL, quotas, owner auth, deposit tokens |
+| `crates/orbit-cli/` | Implemented | Test tool for a node mailbox (no E2EE; test data only) |
+| `deploy/orbit-node/` | Implemented, not run on a VPS | Dockerfile, hardened systemd unit, deployment notes |
+| `protocol/` | Started | [`mailbox.md`](protocol/mailbox.md): `orbit/mailbox/1` |
 | `tools/` | Existing | C ABI smoke test; Holepunch reference inventory |
 | `docs/` | Existing | Architecture, review, ADR, reference map, and implementation plan |
-| `services/orbit-node/` | Planned | Headless infrastructure introduced with offline delivery |
-| `protocol/` | Planned | Schemas, versions, limits, and test vectors |
-| `deploy/` | Planned | Infrastructure configuration |
 
 ## Build and run
 

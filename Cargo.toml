@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/orbit-core", "crates/orbit-ffi", "crates/orbit-protocol", "crates/orbit-transport", "services/orbit-node"]
+members = ["crates/orbit-core", "crates/orbit-ffi", "crates/orbit-protocol", "crates/orbit-transport", "crates/orbit-cli", "services/orbit-node"]
 
 [workspace.package]
 version = "0.1.0"

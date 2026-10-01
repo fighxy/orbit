@@ -51,7 +51,7 @@ iOS: фреймворк собирается в CI, нужен Xcode host и з�
 - [ ] Транзакционная запись crypto state, окончательного ciphertext и outbox.
 - [ ] Dedup, retry того же envelope, durable получение и корректные ACK.
 - [ ] Логические streams по scope/device, авторизация доступа к scope.
-- [ ] Mailbox с ciphertext, capability, TTL и квотами.
+- [x] Mailbox с ciphertext, capability, TTL и квотами. _`services/orbit-node`, протокол `orbit/mailbox/1`; клиенты ещё не подключены, E2EE конвертов не реализовано._
 - [ ] Различимые статусы: локальная очередь, сохранение mailbox, получение адресатом.
 
 Критерий: сообщение проходит между двумя устройствами через direct/relay и

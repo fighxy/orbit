@@ -1,0 +1,34 @@
+# Install: copy the binary to /usr/local/bin/orbit-node, the config to
+# /etc/orbit-node/orbit-node.toml (data_dir = "/var/lib/orbit-node"), then
+#   systemctl enable --now orbit-node
+[Unit]
+Description=Orbit node (mailbox)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/orbit-node run --config /etc/orbit-node/orbit-node.toml
+DynamicUser=yes
+StateDirectory=orbit-node
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+Environment=RUST_LOG=info
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
