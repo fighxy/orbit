@@ -17,6 +17,6 @@ dependencyResolutionManagement {
 rootProject.name = "orbit"
 
 include(":shared")
-// include(":client")
-// include(":apps:desktop")
-// include(":apps:android")
+include(":client")
+include(":apps:desktop")
+include(":apps:android")

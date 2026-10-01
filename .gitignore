@@ -14,3 +14,6 @@ local.properties
 
 # Node (historical reference tools)
 node_modules/
+
+# JVM crash logs
+hs_err_pid*.log

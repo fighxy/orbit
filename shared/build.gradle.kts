@@ -81,10 +81,7 @@ kotlin {
             extraOpts("-libraryPath", staticLibDir.asFile.absolutePath)
         }
         tasks.named("cinteropOrbit$taskSuffix") { dependsOn(cargoBuild) }
-        target.binaries.framework {
-            baseName = "OrbitShared"
-            isStatic = true
-        }
+        // The iOS framework is produced by :client, which exports this module.
     }
 
     sourceSets {
