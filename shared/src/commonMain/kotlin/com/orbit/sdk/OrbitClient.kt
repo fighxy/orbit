@@ -11,6 +11,7 @@ import com.orbit.sdk.bridge.toJsonBytes
 import com.orbit.sdk.model.ConversationId
 import com.orbit.sdk.model.Message
 import com.orbit.sdk.model.MessagePage
+import com.orbit.sdk.model.Profile
 import com.orbit.sdk.model.Snapshot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -34,6 +35,9 @@ import kotlinx.coroutines.withContext
 sealed interface OrbitEvent {
     /** A message became durable locally. Upsert by [Message.id]. */
     data class MessageAdded(val message: Message) : OrbitEvent
+
+    /** The local profile changed. */
+    data class ProfileChanged(val profile: Profile) : OrbitEvent
 
     /** Events were dropped; reload the snapshot and visible history. */
     data object ResyncRequired : OrbitEvent
@@ -76,7 +80,7 @@ class OrbitClient internal constructor(
 
     suspend fun snapshot(): Snapshot {
         val result = call(WireCommand.GetSnapshot) as WireResult.Snapshot
-        return Snapshot(result.identity, result.conversations)
+        return Snapshot(result.identity, result.profile, result.conversations)
     }
 
     /** Messages older than [beforeSeq] (newest when null), oldest first. */
@@ -89,6 +93,12 @@ class OrbitClient internal constructor(
     suspend fun sendText(conversationId: ConversationId, text: String): Message {
         val result = call(WireCommand.SendText(conversationId, text)) as WireResult.MessageSaved
         return result.message
+    }
+
+    /** Sets the local profile; the name is required, [about] may be empty. */
+    suspend fun updateProfile(displayName: String, about: String): Profile {
+        val result = call(WireCommand.UpdateProfile(displayName, about)) as WireResult.ProfileUpdated
+        return result.profile
     }
 
     /** Closes the engine and fails pending calls. Idempotent. */
@@ -149,6 +159,7 @@ class OrbitClient internal constructor(
             is WireEvent.CommandFailed -> lock.withLock { pending.remove(event.requestId) }
                 ?.completeExceptionally(OrbitException(OrbitErrorCode.of(event.error.code), event.error.message))
             is WireEvent.MessageAdded -> mutableEvents.emit(OrbitEvent.MessageAdded(event.message))
+            is WireEvent.ProfileChanged -> mutableEvents.emit(OrbitEvent.ProfileChanged(event.profile))
             WireEvent.ResyncRequired -> mutableEvents.emit(OrbitEvent.ResyncRequired)
         }
     }

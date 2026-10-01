@@ -13,6 +13,12 @@ interface NativeLibrary {
     /** Creates a new identity secret for the platform secure store. */
     fun generateIdentity(): ByteArray
 
+    /** Seals [secret] under a UTF-8 [passcode] (Argon2id; takes about a second). */
+    fun lockIdentity(secret: ByteArray, passcode: ByteArray): ByteArray
+
+    /** Opens a locked secret; throws [OrbitErrorCode.WrongPasscode] on mismatch. */
+    fun unlockIdentity(locked: ByteArray, passcode: ByteArray): ByteArray
+
     /** Opens the account described by [secret]. Blocks while storage opens. */
     fun open(configJson: ByteArray, secret: ByteArray): NativeEngine
 }
@@ -51,6 +57,7 @@ enum class OrbitErrorCode(val value: Int) {
     Closed(12),
     Busy(13),
     Internal(14),
+    WrongPasscode(15),
     Unknown(-1),
     ;
 
@@ -75,4 +82,7 @@ class OrbitNativeException(val code: Int, message: String) : RuntimeException(me
 }
 
 /** Native contract version this SDK was written against. */
-const val SUPPORTED_ABI_VERSION: Int = 1
+const val SUPPORTED_ABI_VERSION: Int = 2
+
+/** First byte of a passcode-locked identity secret (`ORBIT_IDENTITY_LOCKED_TAG`). */
+const val IDENTITY_LOCKED_TAG: Byte = 0x10

@@ -9,6 +9,10 @@ internal object OrbitJni {
 
     @JvmStatic external fun nativeGenerateIdentity(): ByteArray
 
+    @JvmStatic external fun nativeLockIdentity(secret: ByteArray, passcode: ByteArray): ByteArray
+
+    @JvmStatic external fun nativeUnlockIdentity(locked: ByteArray, passcode: ByteArray): ByteArray
+
     @JvmStatic external fun nativeOpen(configJson: ByteArray, secret: ByteArray): Long
 
     @JvmStatic external fun nativeSubmit(engine: Long, commandJson: ByteArray): Long
@@ -25,6 +29,12 @@ class JniNativeLibrary internal constructor() : NativeLibrary {
     override val abiVersion: Int get() = OrbitJni.nativeAbiVersion()
 
     override fun generateIdentity(): ByteArray = OrbitJni.nativeGenerateIdentity()
+
+    override fun lockIdentity(secret: ByteArray, passcode: ByteArray): ByteArray =
+        OrbitJni.nativeLockIdentity(secret, passcode)
+
+    override fun unlockIdentity(locked: ByteArray, passcode: ByteArray): ByteArray =
+        OrbitJni.nativeUnlockIdentity(locked, passcode)
 
     override fun open(configJson: ByteArray, secret: ByteArray): NativeEngine =
         JniNativeEngine(OrbitJni.nativeOpen(configJson, secret))

@@ -35,7 +35,7 @@ class AppController(
         mutableState.value = AppState.Starting
         scope.launch {
             mutableState.value = guarded {
-                if (gateway.identityExists()) openSession() else AppState.NeedsIdentity()
+                if (gateway.identityStatus() == com.orbit.sdk.IdentityStatus.Missing) AppState.NeedsIdentity() else openSession()
             }
         }
     }
@@ -46,7 +46,7 @@ class AppController(
         mutableState.value = AppState.NeedsIdentity(creating = true)
         scope.launch {
             mutableState.value = guarded {
-                gateway.createIdentity()
+                gateway.createIdentity(null)
                 openSession()
             }
         }
@@ -59,7 +59,7 @@ class AppController(
     }
 
     private suspend fun openSession(): AppState =
-        AppState.Ready(ChatSession(gateway.open(), scope).also { it.start() })
+        AppState.Ready(ChatSession(gateway.open(null), scope).also { it.start() })
 
     private suspend fun guarded(block: suspend () -> AppState): AppState = try {
         block()

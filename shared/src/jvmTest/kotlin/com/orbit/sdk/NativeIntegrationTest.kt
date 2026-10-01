@@ -1,5 +1,6 @@
 package com.orbit.sdk
 
+import com.orbit.sdk.bridge.IDENTITY_LOCKED_TAG
 import com.orbit.sdk.bridge.JniNativeLibrary
 import com.orbit.sdk.bridge.OrbitErrorCode
 import com.orbit.sdk.bridge.SUPPORTED_ABI_VERSION
@@ -17,7 +18,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 
 private class MemorySecretStore : SecretStore {
@@ -54,9 +54,9 @@ class NativeIntegrationTest {
     @Test
     fun messagesSurviveRestart() = runBlocking {
         val sdk = OrbitSdk(library, MemorySecretStore(), dataDir.absolutePath)
-        assertFalse(sdk.identityExists())
+        assertEquals(IdentityStatus.Missing, sdk.identityStatus())
         sdk.createIdentity()
-        assertTrue(sdk.identityExists())
+        assertEquals(IdentityStatus.Ready, sdk.identityStatus())
 
         val first = sdk.open()
         val snapshot = first.snapshot()
@@ -72,6 +72,58 @@ class NativeIntegrationTest {
         assertFalse(page.hasMore)
         assertEquals(sent, second.snapshot().conversations.single().lastMessage)
         second.close()
+    }
+
+    @Test
+    fun passcodeLocksTheStoredSecret() = runBlocking {
+        val secrets = MemorySecretStore()
+        val sdk = OrbitSdk(library, secrets, dataDir.absolutePath)
+        sdk.createIdentity(passcode = "орбита-2026")
+        assertEquals(IdentityStatus.PasscodeRequired, sdk.identityStatus())
+        assertEquals(IDENTITY_LOCKED_TAG, secrets.values.getValue(OrbitSdk.DEFAULT_IDENTITY_KEY)[0])
+
+        assertEquals(OrbitErrorCode.WrongPasscode, assertFailsWith<OrbitException> { sdk.open() }.code)
+        assertEquals(OrbitErrorCode.WrongPasscode, assertFailsWith<OrbitException> { sdk.open("неверно") }.code)
+        val client = sdk.open("орбита-2026")
+        val identity = client.snapshot().identity
+        client.close()
+
+        // Changing the passcode keeps the same account.
+        assertEquals(
+            OrbitErrorCode.WrongPasscode,
+            assertFailsWith<OrbitException> { sdk.setPasscode("неверно", "новый-код") }.code,
+        )
+        sdk.setPasscode("орбита-2026", "новый-код")
+        assertEquals(OrbitErrorCode.WrongPasscode, assertFailsWith<OrbitException> { sdk.open("орбита-2026") }.code)
+        sdk.open("новый-код").apply { assertEquals(identity, snapshot().identity) }.close()
+
+        sdk.removePasscode("новый-код")
+        assertEquals(IdentityStatus.Ready, sdk.identityStatus())
+        sdk.open().apply { assertEquals(identity, snapshot().identity) }.close()
+    }
+
+    @Test
+    fun shortPasscodeIsRejected() = runBlocking {
+        val sdk = OrbitSdk(library, MemorySecretStore(), dataDir.absolutePath)
+        sdk.createIdentity()
+        assertEquals(OrbitErrorCode.InvalidArgument, assertFailsWith<OrbitException> { sdk.setPasscode(null, "123") }.code)
+        assertEquals(IdentityStatus.Ready, sdk.identityStatus())
+    }
+
+    @Test
+    fun profileIsStoredAndAnnounced() = runBlocking {
+        val sdk = OrbitSdk(library, MemorySecretStore(), dataDir.absolutePath)
+        sdk.createIdentity()
+        val client = sdk.open()
+        assertNull(client.snapshot().profile)
+        val profile = client.updateProfile("  Анна ", "заметки о звёздах")
+        assertEquals("Анна", profile.displayName)
+        assertEquals(
+            OrbitErrorCode.InvalidArgument,
+            assertFailsWith<OrbitException> { client.updateProfile(" ", "") }.code,
+        )
+        client.close()
+        sdk.open().apply { assertEquals(profile, snapshot().profile) }.close()
     }
 
     @Test

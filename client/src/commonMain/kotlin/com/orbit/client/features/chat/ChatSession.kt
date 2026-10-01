@@ -112,6 +112,7 @@ class ChatSession(
     private suspend fun onEvent(event: OrbitEvent) {
         when (event) {
             is OrbitEvent.MessageAdded -> upsert(event.message)
+            is OrbitEvent.ProfileChanged -> Unit
             OrbitEvent.ResyncRequired -> {
                 reloadSnapshot()
                 mutableChat.value.conversationId?.let { loadNewest(it) }

@@ -87,7 +87,17 @@ data class MessagePage(
     @SerialName("has_more") val hasMore: Boolean,
 )
 
+/** Local profile; shared with contacts once contact exchange exists. */
+@Serializable
+data class Profile(
+    @SerialName("display_name") val displayName: String,
+    val about: String,
+    @SerialName("updated_at_ms") val updatedAtMs: Long,
+)
+
 data class Snapshot(
     val identity: PublicIdentity,
+    /** `null` until the user sets a profile. */
+    val profile: Profile?,
     val conversations: List<Conversation>,
 )

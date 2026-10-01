@@ -4,6 +4,7 @@ import com.orbit.sdk.model.Conversation
 import com.orbit.sdk.model.ConversationId
 import com.orbit.sdk.model.Message
 import com.orbit.sdk.model.MessagePage
+import com.orbit.sdk.model.Profile
 import com.orbit.sdk.model.PublicIdentity
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -39,13 +40,24 @@ internal sealed interface WireCommand {
         @SerialName("conversation_id") val conversationId: ConversationId,
         val text: String,
     ) : WireCommand
+
+    @Serializable
+    @SerialName("update_profile")
+    data class UpdateProfile(
+        @SerialName("display_name") val displayName: String,
+        val about: String,
+    ) : WireCommand
 }
 
 @Serializable
 internal sealed interface WireResult {
     @Serializable
     @SerialName("snapshot")
-    data class Snapshot(val identity: PublicIdentity, val conversations: List<Conversation>) : WireResult
+    data class Snapshot(
+        val identity: PublicIdentity,
+        val profile: Profile? = null,
+        val conversations: List<Conversation>,
+    ) : WireResult
 
     @Serializable
     @SerialName("messages")
@@ -54,6 +66,10 @@ internal sealed interface WireResult {
     @Serializable
     @SerialName("message_saved")
     data class MessageSaved(val message: Message) : WireResult
+
+    @Serializable
+    @SerialName("profile_updated")
+    data class ProfileUpdated(val profile: Profile) : WireResult
 }
 
 @Serializable
@@ -72,6 +88,10 @@ internal sealed interface WireEvent {
     @Serializable
     @SerialName("message_added")
     data class MessageAdded(val message: Message) : WireEvent
+
+    @Serializable
+    @SerialName("profile_changed")
+    data class ProfileChanged(val profile: Profile) : WireEvent
 
     @Serializable
     @SerialName("resync_required")

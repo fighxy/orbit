@@ -1,11 +1,13 @@
 package com.orbit.client.app
 
+import com.orbit.sdk.IdentityStatus
 import com.orbit.sdk.OrbitClient
 import com.orbit.sdk.OrbitEvent
 import com.orbit.sdk.OrbitSdk
 import com.orbit.sdk.model.ConversationId
 import com.orbit.sdk.model.Message
 import com.orbit.sdk.model.MessagePage
+import com.orbit.sdk.model.Profile
 import com.orbit.sdk.model.Snapshot
 import kotlinx.coroutines.flow.Flow
 
@@ -19,24 +21,35 @@ interface ChatBackend {
 
     suspend fun sendText(conversationId: ConversationId, text: String): Message
 
+    suspend fun updateProfile(displayName: String, about: String): Profile
+
     suspend fun close()
 }
 
 /** Account lifecycle. Implemented by [OrbitSdk]. */
 interface AccountGateway {
-    suspend fun identityExists(): Boolean
+    suspend fun identityStatus(): IdentityStatus
 
-    suspend fun createIdentity()
+    suspend fun createIdentity(passcode: String?)
 
-    suspend fun open(): ChatBackend
+    suspend fun open(passcode: String?): ChatBackend
+
+    suspend fun setPasscode(currentPasscode: String?, newPasscode: String)
+
+    suspend fun removePasscode(currentPasscode: String)
 }
 
 fun OrbitSdk.asGateway(): AccountGateway = object : AccountGateway {
-    override suspend fun identityExists() = this@asGateway.identityExists()
+    override suspend fun identityStatus() = this@asGateway.identityStatus()
 
-    override suspend fun createIdentity() = this@asGateway.createIdentity()
+    override suspend fun createIdentity(passcode: String?) = this@asGateway.createIdentity(passcode)
 
-    override suspend fun open(): ChatBackend = this@asGateway.open().asBackend()
+    override suspend fun open(passcode: String?): ChatBackend = this@asGateway.open(passcode).asBackend()
+
+    override suspend fun setPasscode(currentPasscode: String?, newPasscode: String) =
+        this@asGateway.setPasscode(currentPasscode, newPasscode)
+
+    override suspend fun removePasscode(currentPasscode: String) = this@asGateway.removePasscode(currentPasscode)
 }
 
 fun OrbitClient.asBackend(): ChatBackend = object : ChatBackend {
@@ -49,6 +62,9 @@ fun OrbitClient.asBackend(): ChatBackend = object : ChatBackend {
 
     override suspend fun sendText(conversationId: ConversationId, text: String) =
         this@asBackend.sendText(conversationId, text)
+
+    override suspend fun updateProfile(displayName: String, about: String) =
+        this@asBackend.updateProfile(displayName, about)
 
     override suspend fun close() = this@asBackend.close()
 }

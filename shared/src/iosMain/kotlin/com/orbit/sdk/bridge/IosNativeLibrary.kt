@@ -12,6 +12,8 @@ import com.orbit.sdk.ffi.orbit_engine_open
 import com.orbit.sdk.ffi.orbit_engine_submit
 import com.orbit.sdk.ffi.orbit_engine_wait_events
 import com.orbit.sdk.ffi.orbit_identity_generate
+import com.orbit.sdk.ffi.orbit_identity_lock
+import com.orbit.sdk.ffi.orbit_identity_unlock
 import com.orbit.sdk.ffi.orbit_last_error_message
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
@@ -36,6 +38,26 @@ object IosNativeLibrary : NativeLibrary {
     override fun generateIdentity(): ByteArray = memScoped {
         val buffer = alloc<OrbitBuffer>()
         checkStatus(orbit_identity_generate(buffer.ptr))
+        buffer.takeBytes()
+    }
+
+    override fun lockIdentity(secret: ByteArray, passcode: ByteArray): ByteArray = memScoped {
+        val buffer = alloc<OrbitBuffer>()
+        secret.withPointer { secretPtr, secretLen ->
+            passcode.withPointer { passcodePtr, passcodeLen ->
+                checkStatus(orbit_identity_lock(secretPtr, secretLen, passcodePtr, passcodeLen, buffer.ptr))
+            }
+        }
+        buffer.takeBytes()
+    }
+
+    override fun unlockIdentity(locked: ByteArray, passcode: ByteArray): ByteArray = memScoped {
+        val buffer = alloc<OrbitBuffer>()
+        locked.withPointer { lockedPtr, lockedLen ->
+            passcode.withPointer { passcodePtr, passcodeLen ->
+                checkStatus(orbit_identity_unlock(lockedPtr, lockedLen, passcodePtr, passcodeLen, buffer.ptr))
+            }
+        }
         buffer.takeBytes()
     }
 
