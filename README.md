@@ -11,22 +11,23 @@ storage compatibility with Holepunch are not project requirements.
 
 ## Current status
 
-The repository currently contains a Kotlin Multiplatform scaffold, models,
-platform storage placeholders, and design documentation. The Rust core, native
-bridges, client apps, P2P replication, E2EE integration, and voice infrastructure
-are **not implemented yet**.
+Stage 0 of the [roadmap](docs/roadmap.md) is implemented: a working, local-only
+messenger client on the Rust core.
 
-The scaffold is not ready for real account secrets or private conversations:
+| Works today | Verified by |
+|---|---|
+| Account and device identity (Ed25519), account-signed device certificate | Rust unit tests |
+| Identity secret kept only in the OS secure store (desktop keyring, Android Keystore, iOS Keychain); no plaintext fallback | JVM tests; desktop run with and without Secret Service |
+| Optional passcode that seals the stored secret with Argon2id + XChaCha20-Poly1305 | Rust, C ABI and JVM integration tests; desktop run |
+| SQLite storage owned by Rust: WAL + `synchronous=FULL`, message bodies encrypted with the device key, schema migrations, single-writer lock | Rust tests incl. 1000 messages across restart, tampering, v1→v2 upgrade |
+| Engine worker with request IDs, bounded event queue, `resync_required`, cancellable waits | Rust and Kotlin tests incl. close/cancel races |
+| C ABI (generated `orbit.h`) and JNI; Kotlin SDK over both | C smoke test, JVM integration tests |
+| Compose UI: onboarding (profile, passcode), lock screen, chat list, "Saved messages" chat with history paging, settings | Desktop run under Xvfb; Android debug APK build |
 
-- Desktop key storage currently writes a Base64-encoded seed.
-- Desktop message storage writes payload lengths rather than message contents.
-- Android and iOS key storage contain unfinished operations.
-- Desktop source sets mix JVM-only code with Kotlin/Native targets.
-- Public identity and message models need to be separated from secret material.
-
-These are tracked as the first implementation tasks in the
-[roadmap](docs/roadmap.md). The [review](docs/reviews/2026-10-01-architecture-review.md)
-records source evidence and distinguishes static findings from future tests.
+Not implemented yet: networking, contacts and invitations, E2EE between
+devices, groups, channels, voice, attachments, backup and restore. The app does
+not request network access. The iOS bridge and Keychain store compile in CI on
+macOS but have not run on a device; there is no Xcode host app yet.
 
 ## Planned architecture
 
@@ -78,16 +79,36 @@ and media E2EE are separate integration requirements.
 
 | Path | Status | Purpose |
 |---|---|---|
-| `shared/` | Existing scaffold | Evolves into the KMP SDK and bridge/platform adapters |
+| `crates/orbit-core/` | Implemented (stage 0) | Identity, storage, engine facade, client protocol |
+| `crates/orbit-ffi/` | Implemented (stage 0) | C ABI, JNI, desktop keyring adapter, generated `include/orbit.h` |
+| `shared/` | Implemented (stage 0) | KMP SDK: `OrbitSdk`, `OrbitClient`, bridges, secure stores |
+| `client/` | Implemented (stage 0) | Shared Compose UI and state holders |
+| `apps/desktop/`, `apps/android/` | Implemented (stage 0) | JVM desktop and Android entry points |
+| `apps/ios/` | Planned | Xcode host for the `OrbitClient` framework |
+| `tools/` | Existing | C ABI smoke test; Holepunch reference inventory |
 | `docs/` | Existing | Architecture, review, ADR, reference map, and implementation plan |
-| `package.json` | Existing historical inventory | Earlier Holepunch dependency list; no implemented JS bridge |
-| `crates/orbit-core/` | Planned | Rust core and internal modules |
-| `crates/orbit-ffi/` | Planned | Native API boundary |
-| `client/` | Planned | Shared Compose UI |
-| `apps/android/`, `apps/ios/`, `apps/desktop/` | Planned | Entry points and platform packaging |
 | `services/orbit-node/` | Planned | Headless infrastructure introduced with offline delivery |
 | `protocol/` | Planned | Schemas, versions, limits, and test vectors |
 | `deploy/` | Planned | Infrastructure configuration |
+
+## Build and run
+
+Requirements: Rust 1.97 (pinned in `rust-toolchain.toml`), JDK 21, and for
+Android the SDK with API 37, NDK 29.0.14206865 and `cargo install cargo-ndk`.
+
+```sh
+cargo test --workspace                 # Rust core and FFI
+./gradlew :shared:jvmTest :client:jvmTest
+./gradlew :apps:desktop:run            # desktop app; needs an OS keyring
+./gradlew :apps:android:assembleDebug  # builds liborbit_ffi.so via cargo-ndk
+tools/ffi-smoke/run.sh                 # C header + static library
+```
+
+On Linux the desktop app needs a running Secret Service (GNOME Keyring or
+KWallet). `ORBIT_PROFILE=name` starts an isolated profile with its own data
+directory and keyring entry. After changing the C ABI, regenerate the header
+with the command at the top of `crates/orbit-ffi/cbindgen.toml`; CI rejects a
+stale header.
 
 ## Implementation order
 
@@ -110,6 +131,7 @@ The detailed planning and review documents are in Russian.
 
 - [Documentation index](docs/README.md)
 - [Rust/KMP architecture, revision 2](docs/architecture/rust-kmp.md)
+- [Rust ↔ KMP bridge, ABI v2](docs/architecture/kmp-bridge.md)
 - [Architecture review and existing scaffold findings](docs/reviews/2026-10-01-architecture-review.md)
 - [Implementation roadmap and acceptance gates](docs/roadmap.md)
 - [ADR 0001: Rust core, KMP clients, independent protocol](docs/adr/0001-rust-core-kmp-clients.md)

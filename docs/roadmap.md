@@ -1,6 +1,7 @@
 # План реализации Orbit
 
-Статус: план после архитектурного ревью от 01.10.2026. Все пункты ниже открыты.
+Статус: план после архитектурного ревью от 01.10.2026. Отмеченные пункты этапа 0
+реализованы в ветке `feat/stage-0-rust-core-kmp`; остальные открыты.
 Технические кандидаты становятся зависимостями только после соответствующего
 эксперимента. Документ не содержит результатов выполненных сборок или испытаний.
 
@@ -10,19 +11,24 @@
 
 ## 0. Воспроизводимая и безопасная база
 
-- [ ] Зафиксировать toolchain и воспроизводимую Gradle/Cargo сборку; добавить wrapper и CI.
-- [ ] Разделить JVM desktop и Kotlin/Native source sets; убрать Java API из Native target graph.
-- [ ] Создать минимальные `crates/orbit-core/` и `crates/orbit-ffi/`.
-- [ ] Сделать KMP `NativeEngine` с Android/JVM JNI и iOS cinterop.
-- [ ] Добавить минимальный Compose экран и платформенные entry points.
-- [ ] Разделить публичные identity DTO и секреты; убрать seed из sender/member models.
-- [ ] Заменить Base64 key storage и TODO реальными secure-store adapters; исключить молчаливое plaintext fallback.
-- [ ] Заменить хранилище, записывающее только длины payload, реальным storage под управлением Rust.
-- [ ] Проверить необходимость исторического root `package.json`; убрать его из runtime пути и перенести в reference tools либо удалить при отсутствии потребителя.
+- [x] Зафиксировать toolchain и воспроизводимую Gradle/Cargo сборку; добавить wrapper и CI. _Rust 1.97, Gradle 9.8 с checksum, Kotlin 2.4.20, AGP 9.4.1; CI: Rust, JVM, Android, iOS._
+- [x] Разделить JVM desktop и Kotlin/Native source sets; убрать Java API из Native target graph. _Native desktop targets удалены; общий `jniMain` для Android и JVM._
+- [x] Создать минимальные `crates/orbit-core/` и `crates/orbit-ffi/`.
+- [x] Сделать KMP `NativeEngine` с Android/JVM JNI и iOS cinterop. _iOS: компиляция в CI, запуск на устройстве не проверен._
+- [x] Добавить минимальный Compose экран и платформенные entry points. _Desktop и Android; Xcode host для iOS ещё нет._
+- [x] Разделить публичные identity DTO и секреты; убрать seed из sender/member models.
+- [x] Заменить Base64 key storage и TODO реальными secure-store adapters; исключить молчаливое plaintext fallback. _Плюс необязательный код-пароль (Argon2id) поверх хранилища ОС._
+- [x] Заменить хранилище, записывающее только длины payload, реальным storage под управлением Rust.
+- [x] Проверить необходимость исторического root `package.json`; убрать его из runtime пути и перенести в reference tools либо удалить при отсутствии потребителя. _Перенесён в `tools/reference-holepunch/`._
 
 Критерий: чистая сборка устанавливается на iOS device/simulator, Android и одну
 desktop ОС, вызывает Rust и корректно закрывает engine. Данные storage проходят
 round-trip после restart. Подключены smoke сборки остальных заявленных targets.
+
+Состояние критерия: desktop (Linux) проверен вживую — создание аккаунта, сообщения
+и профиль переживают перезапуск, engine закрывается и освобождает блокировку.
+Android: APK собирается с `liborbit_ffi.so`, запуск на устройстве не проверен.
+iOS: фреймворк собирается в CI, нужен Xcode host и запуск на симуляторе.
 
 ## 1. Ранние эксперименты архитектуры
 
