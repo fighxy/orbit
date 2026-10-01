@@ -1,0 +1,16 @@
+# Rust
+/target/
+
+# Gradle / Kotlin
+.gradle/
+.kotlin/
+build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# Node (historical reference tools)
+node_modules/
