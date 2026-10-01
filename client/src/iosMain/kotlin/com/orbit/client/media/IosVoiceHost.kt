@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalForeignApi::class)
+
 package com.orbit.client.media
 
 import androidx.compose.runtime.getValue
@@ -10,6 +12,7 @@ import com.orbit.sdk.OrbitException
 import com.orbit.sdk.model.ConversationId
 import com.orbit.sdk.model.MessageId
 import kotlin.coroutines.resume
+import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,6 +42,7 @@ import platform.Foundation.NSNumber
 import platform.Foundation.NSOperationQueue
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSURL
+import platform.Foundation.create
 import platform.UIKit.UIApplicationDidEnterBackgroundNotification
 import platform.darwin.NSObject
 import platform.darwin.NSObjectProtocol
@@ -250,7 +254,7 @@ class IosVoiceHost : VoiceHost {
     }
 
     private fun readTake(path: String): Take {
-        val data = NSData.dataWithContentsOfFile(path) ?: return Take.Failed
+        val data = NSData.create(contentsOfFile = path) ?: return Take.Failed
         if (data.length > (12L * 1024 * 1024).toULong()) return Take.Failed
         val device = VoicePcm.readDeviceWav(data.toByteArray()) ?: return Take.Failed
         val folded = runCatching {
@@ -303,12 +307,12 @@ class IosVoiceHost : VoiceHost {
     }
 
     private fun recordSettings(): Map<Any?, *> = mapOf(
-        AVFormatIDKey to NSNumber.numberWithUnsignedInt(kAudioFormatLinearPCM),
-        AVSampleRateKey to NSNumber.numberWithDouble(VoicePcm.SAMPLE_RATE.toDouble()),
-        AVNumberOfChannelsKey to NSNumber.numberWithInt(1),
-        AVLinearPCMBitDepthKey to NSNumber.numberWithInt(16),
-        AVLinearPCMIsBigEndianKey to NSNumber.numberWithBool(false),
-        AVLinearPCMIsFloatKey to NSNumber.numberWithBool(false),
+        AVFormatIDKey to NSNumber.create(unsignedInt = kAudioFormatLinearPCM),
+        AVSampleRateKey to NSNumber.create(double = VoicePcm.SAMPLE_RATE.toDouble()),
+        AVNumberOfChannelsKey to NSNumber.create(int = 1),
+        AVLinearPCMBitDepthKey to NSNumber.create(int = 16),
+        AVLinearPCMIsBigEndianKey to NSNumber.create(bool = false),
+        AVLinearPCMIsFloatKey to NSNumber.create(bool = false),
     )
 
     private class PlaybackDelegate(
