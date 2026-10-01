@@ -122,3 +122,31 @@ jobs:
           docker exec orbit-node orbit-cli keygen /var/lib/orbit-node/test.key
           docker exec orbit-node orbit-cli register --node "$ADDR" --key /var/lib/orbit-node/test.key --code ci-registration-code
           docker stop orbit-node
+
+  windows:
+    name: Windows desktop (tests and MSI)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Rust tests (MSVC)
+        run: cargo test --workspace --locked
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      - name: SDK and client tests (real DLL, Windows Credential Manager)
+        run: ./gradlew :shared:jvmTest :client:jvmTest --console=plain
+      - name: MSI installer
+        run: ./gradlew :apps:desktop:packageMsi -Porbit.cargoProfile=release --console=plain
+      - uses: actions/upload-artifact@v7
+        with:
+          name: orbit-windows-msi
+          path: apps/desktop/build/compose/binaries/main/msi/*.msi
+          if-no-files-found: error

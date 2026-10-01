@@ -6,7 +6,8 @@ import java.io.File
 object DesktopPaths {
     /**
      * Data directory for [profile]:
-     * - Windows: `%APPDATA%\Orbit\<profile>`
+     * - Windows: `%LOCALAPPDATA%\Orbit\<profile>`; local rather than roaming,
+     *   because the data is bound to this device's key
      * - macOS: `~/Library/Application Support/Orbit/<profile>`
      * - Linux and others: `$XDG_DATA_HOME/orbit/<profile>` or `~/.local/share/orbit/<profile>`
      */
@@ -16,7 +17,8 @@ object DesktopPaths {
         val home = System.getProperty("user.home")
         val base = when {
             os.contains("win") -> File(
-                System.getenv("APPDATA") ?: throw IllegalStateException("APPDATA is not set"),
+                System.getenv("LOCALAPPDATA")?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException("LOCALAPPDATA is not set"),
                 "Orbit",
             )
             os.contains("mac") -> File(home, "Library/Application Support/Orbit")
