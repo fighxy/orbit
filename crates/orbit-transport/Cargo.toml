@@ -1,0 +1,18 @@
+[package]
+name = "orbit-transport"
+description = "Client side of Orbit's network protocols over Iroh (QUIC)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ed25519-dalek.workspace = true
+iroh.workspace = true
+orbit-protocol.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
