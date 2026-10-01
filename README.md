@@ -111,6 +111,24 @@ cargo test --workspace                 # Rust core and FFI
 tools/ffi-smoke/run.sh                 # C header + static library
 ```
 
+### Windows
+
+CI builds a per-user MSI on `windows-latest` and attaches it to the run as the
+`orbit-windows-msi` artifact. Locally on Windows (Rust MSVC toolchain, JDK 21):
+
+```sh
+./gradlew :apps:desktop:run                                        # development
+./gradlew :apps:desktop:packageMsi -Porbit.cargoProfile=release   # installer
+```
+
+- Installs into the user profile without administrator rights; Start menu and
+  desktop shortcuts are created. The installer is not code-signed yet, so
+  SmartScreen warns on first launch.
+- The account secret is stored in Windows Credential Manager (service
+  `com.orbit.messenger`); data lives in `%LOCALAPPDATA%\Orbit\<profile>`.
+- Only the local "Saved messages" chat works in the client so far; connecting
+  it to `orbit-node` comes with end-to-end encryption.
+
 iOS (macOS with Xcode): `rustup target add aarch64-apple-ios aarch64-apple-ios-sim`,
 `brew install xcodegen`, then `cd apps/ios && xcodegen generate` and open
 `Orbit.xcodeproj`; the build phase compiles the Kotlin framework and the Rust
