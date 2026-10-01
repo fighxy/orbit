@@ -26,9 +26,11 @@ fun MessengerScreen(
     security: SecurityActions,
     preferences: PreferencesRepository,
     navigation: ShellNavigation,
+    prepareLocalNetwork: (suspend () -> Boolean)? = null,
 ) {
     if (navigation.contactsOpen) {
-        ContactsScreen(session, onBack = { navigation.contactsOpen = false }, onContactAdded = { navigation.contactsOpen = false })
+        ContactsScreen(session, onBack = { navigation.contactsOpen = false }, onContactAdded = { navigation.contactsOpen = false },
+            prepareLocalNetwork = prepareLocalNetwork)
         return
     }
     if (navigation.settingsOpen) {

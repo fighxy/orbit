@@ -19,7 +19,8 @@ import kotlinx.coroutines.launch
 
 /** Common flow on Windows, Android and iOS; the Rust core owns registration and trust checks. */
 @Composable
-fun ContactsScreen(session: ChatSession, onBack: () -> Unit, onContactAdded: () -> Unit) {
+fun ContactsScreen(session: ChatSession, onBack: () -> Unit, onContactAdded: () -> Unit,
+    prepareLocalNetwork: (suspend () -> Boolean)? = null) {
     val network by session.network.collectAsState()
     val scope = rememberCoroutineScope()
     var node by rememberSaveable { mutableStateOf(network.node.orEmpty()) }
@@ -30,6 +31,7 @@ fun ContactsScreen(session: ChatSession, onBack: () -> Unit, onContactAdded: () 
     var preview by remember { mutableStateOf<InvitePreview?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var permissionNote by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(network.node) { if (node.isBlank()) node = network.node.orEmpty() }
 
     fun perform(action: suspend () -> Unit) {
@@ -38,6 +40,12 @@ fun ContactsScreen(session: ChatSession, onBack: () -> Unit, onContactAdded: () 
         scope.launch {
             try { action() } catch (e: OrbitException) { error = Strings.describe(e) }
             finally { busy = false }
+        }
+    }
+
+    suspend fun prepareNetwork() {
+        prepareLocalNetwork?.let { request ->
+            permissionNote = if (request()) null else Strings.localNetworkDenied
         }
     }
 
@@ -61,11 +69,13 @@ fun ContactsScreen(session: ChatSession, onBack: () -> Unit, onContactAdded: () 
                 enabled = !busy, modifier = Modifier.fillMaxWidth(), maxLines = 3)
             OutlinedTextField(code, { code = it }, label = { Text(Strings.registrationCode) },
                 enabled = !busy, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-            Button(onClick = { perform { session.registerNode(node.trim(), code.takeIf { it.isNotBlank() }); code = "" } }, enabled = !busy && node.isNotBlank()) {
+            prepareLocalNetwork?.let { Text(Strings.localNetworkHint, style = MaterialTheme.typography.bodySmall) }
+            Button(onClick = { perform { prepareNetwork(); session.registerNode(node.trim(), code.takeIf { it.isNotBlank() }); code = "" } }, enabled = !busy && node.isNotBlank()) {
                 Text(Strings.registerOnServer)
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             (error ?: network.error)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            permissionNote?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             HorizontalDivider()
             Text(Strings.myInvitation, style = MaterialTheme.typography.titleLarge)
             Text(Strings.invitationHint)
@@ -87,7 +97,7 @@ fun ContactsScreen(session: ChatSession, onBack: () -> Unit, onContactAdded: () 
                 Text(contact.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(Strings.verifyContactKey)
                 SelectionContainer { Text(contact.accountId.hex.uppercase().chunked(4).joinToString(" "), style = MaterialTheme.typography.bodySmall) }
-                Button(onClick = { perform { session.acceptInvite(invitation); invitation = ""; preview = null; onContactAdded() } },
+                Button(onClick = { perform { prepareNetwork(); session.acceptInvite(invitation); invitation = ""; preview = null; onContactAdded() } },
                     enabled = !busy && network.state == ConnectionState.Online) { Text(Strings.addContact) }
             }
         }

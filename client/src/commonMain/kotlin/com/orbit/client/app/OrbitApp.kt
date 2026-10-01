@@ -27,6 +27,7 @@ fun OrbitApp(
     preferences: PreferencesRepository,
     navigation: ShellNavigation = remember { ShellNavigation() },
     linuxDesktop: Boolean = false,
+    prepareLocalNetwork: (suspend () -> Boolean)? = null,
 ) {
     val prefs by preferences.state.collectAsState()
     OrbitTheme(prefs.theme) {
@@ -54,6 +55,7 @@ fun OrbitApp(
                         session = current.session,
                         preferences = preferences,
                         navigation = navigation,
+                        prepareLocalNetwork = prepareLocalNetwork,
                         security = object : SecurityActions {
                             override val passcodeEnabled = current.passcodeEnabled
 
