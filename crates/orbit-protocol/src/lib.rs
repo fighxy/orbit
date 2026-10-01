@@ -5,6 +5,7 @@
 //! `orbit-transport` (client) and `orbit-node` (server).
 
 pub mod address;
+pub mod envelope;
 pub mod mailbox;
 
 pub use address::NodeAddress;

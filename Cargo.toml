@@ -14,11 +14,13 @@ orbit-core = { path = "crates/orbit-core" }
 orbit-protocol = { path = "crates/orbit-protocol" }
 orbit-transport = { path = "crates/orbit-transport" }
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
+base64 = "0.23"
 blake3 = "1.8"
 chacha20poly1305 = { version = "0.11", features = ["zeroize"] }
 ed25519-dalek = "3.0"
 getrandom = "0.4"
 hex = "0.4"
+hpke = { version = "0.14", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha"] }
 iroh = { version = "1.3", default-features = false, features = ["tls-ring"] }
 jni = "0.22"
 keyring = { version = "4.2", default-features = false, features = ["v1"] }

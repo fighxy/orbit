@@ -39,6 +39,10 @@ pub enum Error {
     Internal(&'static str),
     #[error("passcode is incorrect")]
     WrongPasscode,
+    #[error("delivery server is not configured")]
+    NetworkNotConfigured,
+    #[error("invitation is invalid: {0}")]
+    InvalidInvite(&'static str),
 }
 
 /// Stable error codes. Values are part of the C ABI and must not be reused.
@@ -61,6 +65,8 @@ pub enum ErrorCode {
     Busy = 13,
     Internal = 14,
     WrongPasscode = 15,
+    NetworkNotConfigured = 16,
+    InvalidInvite = 17,
 }
 
 impl Error {
@@ -81,6 +87,8 @@ impl Error {
             Error::Busy => ErrorCode::Busy,
             Error::Internal(_) => ErrorCode::Internal,
             Error::WrongPasscode => ErrorCode::WrongPasscode,
+            Error::NetworkNotConfigured => ErrorCode::NetworkNotConfigured,
+            Error::InvalidInvite(_) => ErrorCode::InvalidInvite,
         }
     }
 

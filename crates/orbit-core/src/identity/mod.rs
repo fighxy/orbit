@@ -11,12 +11,17 @@
 //!   account seed, so restoring an account cannot resurrect a revoked device.
 //! * The account key certifies the device key ([`DeviceCertificate`]).
 //! * The local storage key is derived from the device seed.
+//! * So are the device's inbox key (HPKE, for end-to-end envelopes) and its
+//!   mailbox key. The mailbox key is separate from the device key so the
+//!   node cannot link a mailbox to a published identity by key equality.
 
 pub mod passcode;
 
 use std::fmt;
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use orbit_protocol::envelope::{DeviceIdentity, InboxKey};
+use orbit_protocol::mailbox::SignatureBytes;
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
@@ -32,6 +37,8 @@ pub const IDENTITY_SECRET_LEN: usize = 1 + 2 * SEED_LEN;
 const ACCOUNT_SIGNING_CONTEXT: &str = "orbit 2026-10-01 account signing key v1";
 const DEVICE_SIGNING_CONTEXT: &str = "orbit 2026-10-01 device signing key v1";
 const LOCAL_STORAGE_CONTEXT: &str = "orbit 2026-10-01 local storage key v1";
+const DEVICE_INBOX_CONTEXT: &str = "orbit 2026-10-01 device inbox key v1";
+const DEVICE_MAILBOX_CONTEXT: &str = "orbit 2026-10-01 device mailbox key v1";
 
 const DEVICE_CERTIFICATE_LABEL: &[u8] = b"orbit/v1/device-certificate\0";
 
@@ -143,6 +150,15 @@ impl PublicIdentity {
     pub fn verify(&self) -> Result<()> {
         self.device_certificate.verify(&self.account_id, &self.device_id)
     }
+
+    /// Wire form carried in envelopes and contact cards.
+    pub fn to_device_identity(&self) -> DeviceIdentity {
+        DeviceIdentity {
+            account: *self.account_id.as_bytes(),
+            device: *self.device_id.as_bytes(),
+            certificate: SignatureBytes(self.device_certificate.as_bytes().to_vec()),
+        }
+    }
 }
 
 /// Keys of the local account and device, derived from an [`IdentitySecret`].
@@ -150,9 +166,14 @@ pub struct LocalIdentity {
     // Kept for signing device certificates and, later, account-level events.
     #[allow(dead_code)]
     account_key: SigningKey,
-    // Used by later stages for signing local events.
+    // Device, mailbox and inbox keys are used by the delivery service, which
+    // the engine starts in the next stage.
     #[allow(dead_code)]
     device_key: SigningKey,
+    #[allow(dead_code)]
+    mailbox_key: SigningKey,
+    #[allow(dead_code)]
+    inbox: InboxKey,
     storage_key: Zeroizing<[u8; 32]>,
     public: PublicIdentity,
 }
@@ -162,6 +183,9 @@ impl LocalIdentity {
         let account_key = derive_signing_key(ACCOUNT_SIGNING_CONTEXT, &secret.account_seed);
         let device_key = derive_signing_key(DEVICE_SIGNING_CONTEXT, &secret.device_seed);
         let storage_key = Zeroizing::new(blake3::derive_key(LOCAL_STORAGE_CONTEXT, secret.device_seed.as_ref()));
+        let mailbox_key = derive_signing_key(DEVICE_MAILBOX_CONTEXT, &secret.device_seed);
+        let inbox_ikm = Zeroizing::new(blake3::derive_key(DEVICE_INBOX_CONTEXT, secret.device_seed.as_ref()));
+        let inbox = InboxKey::derive(&inbox_ikm);
 
         let account_id = AccountId::from_bytes(account_key.verifying_key().to_bytes());
         let device_id = DeviceId::from_bytes(device_key.verifying_key().to_bytes());
@@ -170,6 +194,8 @@ impl LocalIdentity {
         Self {
             account_key,
             device_key,
+            mailbox_key,
+            inbox,
             storage_key,
             public: PublicIdentity {
                 account_id,
@@ -185,6 +211,24 @@ impl LocalIdentity {
 
     pub(crate) fn storage_key(&self) -> &[u8; 32] {
         &self.storage_key
+    }
+
+    /// Signs envelopes and invitations.
+    #[allow(dead_code)]
+    pub(crate) fn device_key(&self) -> &SigningKey {
+        &self.device_key
+    }
+
+    /// Owns this device's mailbox on the node.
+    #[allow(dead_code)]
+    pub(crate) fn mailbox_key(&self) -> &SigningKey {
+        &self.mailbox_key
+    }
+
+    /// Decrypts envelopes addressed to this device.
+    #[allow(dead_code)]
+    pub(crate) fn inbox(&self) -> &InboxKey {
+        &self.inbox
     }
 }
 
@@ -258,6 +302,17 @@ mod tests {
             ..public
         };
         assert!(swapped.verify().is_err());
+    }
+
+    #[test]
+    fn wire_identity_verifies_with_the_protocol_crate() {
+        let identity = LocalIdentity::from_secret(&fixed_secret());
+        let wire = identity.public().to_device_identity();
+        wire.verify().unwrap();
+        // Device, mailbox and inbox keys are distinct.
+        let device = identity.device_key().verifying_key().to_bytes();
+        assert_ne!(device, identity.mailbox_key().verifying_key().to_bytes());
+        assert_ne!(device, identity.inbox().public());
     }
 
     #[test]
