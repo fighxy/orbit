@@ -94,3 +94,31 @@ jobs:
           xcodebuild -project Orbit.xcodeproj -scheme Orbit -configuration Debug \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO build
+
+  node-image:
+    name: orbit-node Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build image
+        run: docker build -f deploy/orbit-node/Dockerfile -t orbit-node .
+      - name: Start container and wait for the node address
+        run: |
+          cat > orbit-node.toml <<'TOML'
+          data_dir = "/var/lib/orbit-node"
+          listen = ["0.0.0.0:7443"]
+          [mailbox]
+          registration_code = "ci-registration-code"
+          TOML
+          docker run -d --name orbit-node -p 7443:7443/udp \
+            -v "$PWD/orbit-node.toml:/etc/orbit-node/orbit-node.toml:ro" orbit-node
+          for i in $(seq 1 30); do
+            if docker logs orbit-node 2>&1 | grep -q 'node address:'; then break; fi
+            sleep 1
+          done
+          docker logs orbit-node
+          ADDR=$(docker logs orbit-node 2>/dev/null | grep -o 'node address: .*' | cut -d' ' -f3 | sed 's/0.0.0.0/127.0.0.1/')
+          test -n "$ADDR"
+          docker exec orbit-node orbit-cli keygen /var/lib/orbit-node/test.key
+          docker exec orbit-node orbit-cli register --node "$ADDR" --key /var/lib/orbit-node/test.key --code ci-registration-code
+          docker stop orbit-node
