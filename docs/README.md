@@ -1,25 +1,44 @@
-# Документация Orbit
+# Orbit documentation
 
-Согласованное направление: собственный протокол Orbit, ядро на Rust, мосты и
-клиенты на Kotlin Multiplatform. Общий UI предлагается на Compose Multiplatform.
+Direction: Orbit's own protocol, a Rust core, Kotlin Multiplatform bridges and
+clients, shared Compose UI.
 
-Продукт: сообщества с постоянными голосовыми комнатами, каналы публикаций,
-личные и групповые чаты, файлы, голосовые сообщения и видеокружки.
+Product aim: communities with persistent voice rooms, broadcast channels,
+personal and group chats, files, voice messages, and video notes. The working
+tree is earlier than that aim. What exists is direct text over an invite,
+optional mailbox delivery, author edit and delete, pairwise groups and
+channels (not MLS, at most 8 members), a profile JPEG or PNG of at most
+32 KiB, and a voice note in a direct chat or in saved messages. Video notes,
+file attachments, voice rooms, MLS, and an SFU are not started.
 
-| Документ | Когда читать |
+| Document | When to read it |
 |---|---|
-| [ADR 0001](adr/0001-rust-core-kmp-clients.md) | Чтобы понять выбранные границы и ещё открытые решения |
-| [Roadmap](roadmap.md) | Перед началом следующей реализации; содержит проверяемые критерии |
-| [Архитектура, редакция 2](architecture/rust-kmp.md) | Для структуры директорий, KMP-мостов, данных, медиа и безопасности |
-| [Мост Rust ↔ KMP](architecture/kmp-bridge.md) | Для ABI, протокола команд, правил памяти и код-пароля |
-| [Ревью от 01.10.2026](reviews/2026-10-01-architecture-review.md) | Для причин изменения стратегии и подтверждённых дефектов каркаса |
-| [Карта Holepunch](holepunch-map.md) | Для сопоставления функций исходного стека с планом Orbit |
+| [ADR 0001](adr/0001-rust-core-kmp-clients.md) | Chosen boundaries, and decisions that are still open |
+| [Roadmap](roadmap.md) | What is in the tree and what the next stage still requires |
+| [Architecture, revision 2](architecture/rust-kmp.md) | Target structure. Read the status note at the top before the design body |
+| [Rust ↔ KMP bridge](architecture/kmp-bridge.md) | ABI 6, commands, memory rules, passcode |
+| [Vertical slice](vertical-slice.md) | Invites, edits, groups, channels, avatars, voice notes, phrase limits |
+| [Review of 2026-10-01](reviews/2026-10-01-architecture-review.md) | Why the strategy changed. A snapshot of the scaffold commit named in that file |
+| [Holepunch map](holepunch-map.md) | Reference only. Orbit does not speak Holepunch on the wire |
 
-ADR фиксирует выбранное направление. Архитектура описывает проект, roadmap —
-порядок реализации. Ревью является снимком состояния на указанном в нём commit.
-Наличие документа или имени директории не означает готовую функцию.
+An ADR records a decision. The architecture document is the target shape. The
+roadmap is the order of work. The review is the tree it names, not this
+branch. A document or a directory name is not a finished feature.
 
-Этап 0 реализован: Rust-ядро, C ABI/JNI, KMP SDK и Compose-клиент для desktop и
-Android с локальными заметками, профилем и код-паролем. Сеть, E2EE между
-устройствами, группы, каналы и голос ещё не реализованы. Запуск на iOS и Android
-устройствах и нагрузочные проверки пока не выполнены.
+Stage 0 is in the tree: Rust core, C ABI/JNI, KMP SDK, Compose client, local
+notes, profile, passcode. ABI is 6 (`ORBIT_ABI_VERSION` and
+`SUPPORTED_ABI_VERSION`). Schema version is 7. The vertical slice adds direct
+sessions (Iroh `presets::N0`, ALPN `orbit/direct/1`, endpoint id in the
+invite), optional `orbit/mailbox/1` delivery, HPKE without forward secrecy,
+edit and delete, pairwise groups and channels, avatars, and chunked voice
+notes. Android records and plays a note and scales a gallery photo. Desktop
+does the same through `javax.sound` and a file dialog; `DesktopMediaTest`
+passed, the window was not clicked, and no new MSI was built. iOS source records and plays through AVFoundation and scales a chosen photo to a JPEG of at most 32 KiB. `:client:jvmTest` passed. The Apple target was not compiled on Windows, and no simulator or device was run. Onboarding is a display name and an optional passcode.
+A 24-word phrase can restore the same Rust identity and is not on the screen
+or in the FFI. An installed MSI from before ABI 6 will not load this SDK.
+This index does not ask for a rebuild.
+
+Device checks and load tests have not been done. The mailbox integration test
+has not been re-run after the rooms outbox join. UI for groups and channels
+is source in `client/` and `shared/`; this index does not claim the dialogs
+were clicked.

@@ -1,6 +1,8 @@
 # Orbit: Rust-ядро, мосты и клиенты на Kotlin Multiplatform
 
-Дата: 1 октября 2026. Редакция 2 — после архитектурного ревью. Статус: уточнённый проект; реализация и испытания ещё не выполнены.
+Дата: 1 октября 2026. Редакция 2 — после архитектурного ревью. Ниже — целевой проект, не отчёт о готовности.
+
+**Working tree (`feat/vertical-chat`), read this before the design.** Stage 0 and the vertical slice are in the branch. Two people meet with an `orbit://invite/…` signed contact card. On the direct path the card carries an endpoint id, not an IP (ALPN `orbit/direct/1`, Iroh `presets::N0`, key at `data_dir/accounts/<account>/peer.key`). `Endpoint::online()` is not called at engine start. Mailbox `hex@ip:port` (ALPN `orbit/mailbox/1`, relays off) is optional. **Стать узлом** is a same-Wi-Fi helper. Author edit and delete exist. Groups and channels are pairwise sealed copies, not MLS, at most 8 members, no membership changes, no history for anyone missing from the welcome, no queue for a closed app on the direct path. There is no username directory. `normalize_username` (4–31 characters, lowercase ASCII, digits and underscore, at least one digit) is a Rust helper and is not the registration screen. One account is one device. A 24-word phrase in `IdentitySecret` restores the same account, device, and direct address and does not contain chats. The FFI and the onboarding screen still create the random secret. Voice notes are 16 kHz mono PCM WAV, at most 60 seconds, split into 32 KiB slices under the 64 KiB envelope, only in direct chats and saved messages. Android and desktop record and play them. iOS source records and plays through AVFoundation and scales a photo to a JPEG of at most 32 KiB. That source was not compiled on Windows and was not run on a device. A profile picture is a separate JPEG or PNG of at most 32 KiB. Video notes, file attachments, voice rooms, OpenMLS, and an SFU are not in the tree. ABI is 6. Schema version is 7. Current behavior is [vertical-slice.md](../vertical-slice.md), the [roadmap](../roadmap.md), and the [bridge](kmp-bridge.md). The rest of this file is the design written against `main` at `8125a75264bc61310d6c7d29508dc035f1544505`. Where it disagrees with the tree, the tree wins.
 
 Основание: `fighxy/orbit`, ветка `main`, commit `8125a75264bc61310d6c7d29508dc035f1544505`. Согласованные решения: собственный протокол Orbit; Rust для ядра; Kotlin Multiplatform для мостов и клиентов. Функциональный охват: голосовые комнаты как в Discord, каналы как в Telegram, голосовые сообщения, видеокружки и вложения. Compose Multiplatform предлагается как общий UI.
 
@@ -16,7 +18,7 @@ Iroh, OpenMLS и str0m — кандидаты, требующие испытан
 
 ## 1. Что есть сейчас
 
-В репозитории есть `shared/` с моделями Identity, Message, Room, интерфейсами хранилища и платформенными заготовками. Реализованного P2P-движка, Rust workspace, приложений и JS-моста в просмотренном дереве нет. iOS KeyStore содержит TODO.
+Этот раздел описывает просмотренный `main` (`8125a75264bc61310d6c7d29508dc035f1544505`), а не ветку `feat/vertical-chat`. На том commit в репозитории был `shared/` с моделями Identity, Message, Room, интерфейсами хранилища и платформенными заготовками. Реализованного P2P-движка, Rust workspace и приложений в том дереве не было. iOS KeyStore содержал TODO. Текущая ветка этот каркас уже прошла: см. заметку в начале файла.
 
 Документы противоречат друг другу: README описывает использование JS-зависимостей через мост, а `docs/holepunch-map.md` — собственную реализацию на Kotlin. `package.json` перечисляет зависимости, но не доказывает, что они используются. Поэтому работа будет созданием ядра на раннем каркасе, а не переносом готового мессенджера.
 
@@ -155,6 +157,8 @@ flowchart TD
 
 Topic-based discovery не появляется автоматически от использования Iroh. Для MVP адреса, network key и bootstrap информация приходят в приглашении. Для большой сети отдельно понадобятся адресный lookup и/или discovery overlay. Presence — приблизительная доступность устройств, а не гарантированный глобальный online.
 
+Working tree, which is narrower than that MVP note: the direct invite carries the endpoint id only. Sockets are not pasted into it. `presets::N0` does the lookup and relay fallback. The engine does not wait for `Endpoint::online()`. That is not the finished NAT, network-change, or battery trial this section asks for. The mailbox path still dials pasted `hex@ip:port` with relays disabled.
+
 Существующий Rust Hypercore от datrs описан авторами как ограниченный порт с целью совместимости дискового формата LTS. Его можно изучить, но выбранный собственный протокол не требует зависимости от него.
 
 ## 7. Мосты на KMP
@@ -269,6 +273,8 @@ Seed backup восстанавливает account authority согласно з
 Secure storage реализуется в Kotlin actual: Keychain, Android Keystore, desktop keyring. Rust получает ограниченные операции/защищённый key material через adapter. Проверка возможности non-exportable signing для выбранного алгоритма — отдельный прототип. Если ОС не поддерживает нужный тип ключа, хранить зашифрованный секрет, а не имитировать аппаратную защиту.
 
 Transport encryption защищает соединение. E2EE защищает сохранённые сообщения и вложения даже на чужом mailbox. Эти уровни не взаимозаменяемы. Выбор E2EE обязателен до первого сквозного сценария с приватными данными. Кандидат — OpenMLS/RFC 9420, включая эксперимент группы из двух устройств, чтобы не вводить два самостоятельных криптопротокола без причины. Пригодность решается после проверки persistence, Commit/Welcome, offline и rejoin. Собственные ratchet и криптопримитивы не разрабатываются.
+
+Working tree: the first private text path uses interim HPKE (`orbit/envelope/1`), not OpenMLS. There is no forward secrecy and no MLS epoch. The pairwise group is a separate sealed copy per member. It does not close the OpenMLS experiment.
 
 Публичный канал распространяет проверяемые подписанные публикации; приватный канал требует отдельно спроектированной схемы ключей и выдачи истории новым подписчикам. Приглашение закрепляет ожидаемую идентичность; lookup/mailbox не должен получать право незаметно заменять ключи аккаунта. Политики «история до вступления», «новое устройство» и «потеря всех устройств» проверяются до обещания восстановления.
 
@@ -459,4 +465,4 @@ JS interoperability tests для собственного протокола н�
 - [SQLite atomic commit](https://www.sqlite.org/atomiccommit.html): основание для транзакционного локального хранения; корректность интеграции требует тестов.
 - [Kotlin/Native C interop](https://kotlinlang.org/docs/native-c-interop.html): платформенная граница C ABI.
 
-Документ фиксирует целевую архитектуру и порядок реализации. Rust-ядро, KMP-мосты, клиенты и инфраструктура ещё не реализованы; публикация документа не означает прохождение описанных испытаний.
+Документ фиксирует целевую архитектуру и порядок реализации на момент ревью. Публикация документа не означает прохождение описанных испытаний. Голосовые комнаты, MLS, вложения и собственный SFU по-прежнему не реализованы. Что уже есть в рабочей ветке, перечислено в английской заметке в начале файла, а не в этом заключении.

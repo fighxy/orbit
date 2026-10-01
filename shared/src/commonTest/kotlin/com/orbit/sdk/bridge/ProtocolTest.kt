@@ -1,6 +1,7 @@
 package com.orbit.sdk.bridge
 
 import com.orbit.sdk.model.ConversationId
+import com.orbit.sdk.model.MessageId
 import com.orbit.sdk.model.ConversationKind
 import com.orbit.sdk.model.MessageBody
 import com.orbit.sdk.model.MessageState
@@ -11,6 +12,24 @@ import kotlin.test.assertNull
 
 /** Golden JSON emitted by orbit-core; keeps the Kotlin mirror of the protocol honest. */
 class ProtocolTest {
+    @Test
+    fun networkCommandsAndNotificationsMatchCoreContract() {
+        assertEquals("""{"type":"register_node","node":"node","registration_code":"code"}""",
+            WireCommand.RegisterNode("node", "code").toJsonBytes().decodeToString())
+        assertEquals("""{"type":"accept_invite","text":"orbit://invite/test"}""",
+            WireCommand.AcceptInvite("orbit://invite/test").toJsonBytes().decodeToString())
+        val batch = decodeBatch("""{"events":[
+            {"seq":1,"event":{"type":"network_changed","network":{"node":"n","state":"online","error":null}}},
+            {"seq":2,"event":{"type":"contacts_changed"}},
+            {"seq":3,"event":{"type":"command_succeeded","request_id":1,"result":{"type":"invite_inspected","preview":{"account_id":"${"01".repeat(32)}","device_id":"${"02".repeat(32)}","display_name":"Алиса","expires_at_ms":50}}}}
+        ]}""".encodeToByteArray())
+        assertEquals(com.orbit.sdk.model.ConnectionState.Online, assertIs<WireEvent.NetworkChanged>(batch.events[0].event).network.state)
+        assertEquals(WireEvent.ContactsChanged, batch.events[1].event)
+        val result = assertIs<WireResult.InviteInspected>(assertIs<WireEvent.CommandSucceeded>(batch.events[2].event).result)
+        assertEquals("Алиса", result.preview.displayName)
+        assertEquals(OrbitErrorCode.InvalidInvite, OrbitErrorCode.of("invalid_invite"))
+        assertEquals(18, OrbitErrorCode.Network.value)
+    }
     @Test
     fun commandsEncodeLikeRust() {
         val id = ConversationId("11".repeat(16))
@@ -26,6 +45,23 @@ class ProtocolTest {
         assertEquals(
             """{"type":"send_text","conversation_id":"${id.hex}","text":"привет"}""",
             WireCommand.SendText(id, "привет").toJsonBytes().decodeToString(),
+        )
+        val messageId = MessageId("ab".repeat(16))
+        assertEquals(
+            """{"type":"edit_text","conversation_id":"${id.hex}","message_id":"${messageId.hex}","text":"ещё"}""",
+            WireCommand.EditText(id, messageId, "ещё").toJsonBytes().decodeToString(),
+        )
+        assertEquals(
+            """{"type":"delete_text","conversation_id":"${id.hex}","message_id":"${messageId.hex}"}""",
+            WireCommand.DeleteText(id, messageId).toJsonBytes().decodeToString(),
+        )
+        assertEquals(
+            """{"type":"create_group","title":"кухня","members":["${id.hex}"]}""",
+            WireCommand.CreateGroup("кухня", listOf(id)).toJsonBytes().decodeToString(),
+        )
+        assertEquals(
+            """{"type":"create_channel","title":"новости","members":["${id.hex}"]}""",
+            WireCommand.CreateChannel("новости", listOf(id)).toJsonBytes().decodeToString(),
         )
     }
 

@@ -58,6 +58,9 @@ enum class OrbitErrorCode(val value: Int) {
     Busy(13),
     Internal(14),
     WrongPasscode(15),
+    NetworkNotConfigured(16),
+    InvalidInvite(17),
+    Network(18),
     Unknown(-1),
     ;
 
@@ -82,7 +85,7 @@ class OrbitNativeException(val code: Int, message: String) : RuntimeException(me
 }
 
 /** Native contract version this SDK was written against. */
-const val SUPPORTED_ABI_VERSION: Int = 2
+const val SUPPORTED_ABI_VERSION: Int = 6
 
 /** First byte of a passcode-locked identity secret (`ORBIT_IDENTITY_LOCKED_TAG`). */
 const val IDENTITY_LOCKED_TAG: Byte = 0x10

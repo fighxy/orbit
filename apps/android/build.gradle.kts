@@ -55,6 +55,7 @@ dependencies {
     implementation(project(":client"))
     implementation(libs.androidx.activity.compose)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.androidx.exifinterface)
 }
 
 // Builds liborbit_ffi.so for each ABI with cargo-ndk (`cargo install cargo-ndk`).

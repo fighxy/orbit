@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{Conversation, ConversationId, Message, Profile};
+use crate::domain::{Contact, Conversation, ConversationId, InvitePreview, Message, NetworkStatus, Profile};
 use crate::error::ErrorInfo;
 use crate::identity::PublicIdentity;
 use crate::storage::MessagePage;
@@ -17,6 +17,18 @@ pub type RequestId = u64;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    RegisterNode {
+        node: String,
+        #[serde(default)]
+        registration_code: Option<String>,
+    },
+    CreateInvite,
+    InspectInvite {
+        text: String,
+    },
+    AcceptInvite {
+        text: String,
+    },
     /// Public identity and conversation list. Clients request it after start
     /// and after `resync_required`.
     GetSnapshot,
@@ -27,17 +39,53 @@ pub enum Command {
         before_seq: Option<u64>,
         limit: u32,
     },
-    /// Stores a text message. In the current stage only the saved-messages
-    /// conversation exists, so nothing is sent to the network.
+    /// Stores a text message. Saved messages stay on this device. A direct
+    /// conversation is sealed and handed to the outbox.
     SendText {
         conversation_id: ConversationId,
         text: String,
+    },
+    /// Replaces the author's own text and seals the change for the contact.
+    EditText {
+        conversation_id: ConversationId,
+        message_id: crate::domain::MessageId,
+        text: String,
+    },
+    /// Removes the author's own text. The peer sees a deletion, not the old text.
+    DeleteText {
+        conversation_id: ConversationId,
+        message_id: crate::domain::MessageId,
+    },
+    /// Pairwise group with the ready direct contacts in `members`.
+    CreateGroup {
+        title: String,
+        members: Vec<ConversationId>,
+    },
+    /// Pairwise channel. Only this device can publish.
+    CreateChannel {
+        title: String,
+        members: Vec<ConversationId>,
     },
     /// Sets the local profile. The name is required; `about` may be empty.
     UpdateProfile {
         display_name: String,
         #[serde(default)]
         about: String,
+    },
+    /// Sets or clears the profile picture. `image` is standard base64.
+    /// Empty clears it. JPEG or PNG, at most 32 KiB.
+    SetAvatar {
+        image: String,
+    },
+    /// Sends a voice note. `wav_base64` is a 16 kHz mono 16-bit PCM WAV,
+    /// at most 60 seconds. Not a live room and not a video circle.
+    SendVoice {
+        conversation_id: ConversationId,
+        wav_base64: String,
+    },
+    /// Returns the stored WAV for a voice note.
+    ReadVoice {
+        message_id: crate::domain::MessageId,
     },
 }
 
@@ -49,6 +97,19 @@ pub enum CommandResult {
         /// `None` until the user sets a profile.
         profile: Option<Profile>,
         conversations: Vec<Conversation>,
+        network: NetworkStatus,
+    },
+    NodeRegistered {
+        network: NetworkStatus,
+    },
+    InviteCreated {
+        text: String,
+    },
+    InviteInspected {
+        preview: InvitePreview,
+    },
+    ContactAdded {
+        contact: Contact,
     },
     Messages {
         page: MessagePage,
@@ -58,6 +119,13 @@ pub enum CommandResult {
     },
     ProfileUpdated {
         profile: Profile,
+    },
+    RoomCreated {
+        conversation: Conversation,
+    },
+    Voice {
+        message_id: crate::domain::MessageId,
+        wav_base64: String,
     },
 }
 
@@ -80,6 +148,10 @@ pub enum Event {
     ProfileChanged {
         profile: Profile,
     },
+    ContactsChanged,
+    NetworkChanged {
+        network: NetworkStatus,
+    },
     /// Events were dropped because the client did not read them in time.
     /// The client must request a new snapshot and reload visible history.
     ResyncRequired,
@@ -89,7 +161,13 @@ impl Event {
     /// Results are never dropped; their number is bounded by in-flight
     /// commands. Notifications can be recovered through a snapshot.
     pub(crate) fn is_droppable(&self) -> bool {
-        matches!(self, Event::MessageAdded { .. } | Event::ProfileChanged { .. })
+        matches!(
+            self,
+            Event::MessageAdded { .. }
+                | Event::ProfileChanged { .. }
+                | Event::ContactsChanged
+                | Event::NetworkChanged { .. }
+        )
     }
 
     pub(crate) fn is_command_result(&self) -> bool {

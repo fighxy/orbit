@@ -8,8 +8,13 @@ import com.orbit.sdk.bridge.WireEvent
 import com.orbit.sdk.bridge.WireResult
 import com.orbit.sdk.bridge.decodeBatch
 import com.orbit.sdk.bridge.toJsonBytes
+import com.orbit.sdk.model.Contact
+import com.orbit.sdk.model.Conversation
+import com.orbit.sdk.model.InvitePreview
+import com.orbit.sdk.model.NetworkStatus
 import com.orbit.sdk.model.ConversationId
 import com.orbit.sdk.model.Message
+import com.orbit.sdk.model.MessageId
 import com.orbit.sdk.model.MessagePage
 import com.orbit.sdk.model.Profile
 import com.orbit.sdk.model.Snapshot
@@ -33,6 +38,9 @@ import kotlinx.coroutines.withContext
 
 /** Notifications from the engine that are not answers to a call. */
 sealed interface OrbitEvent {
+    data object ContactsChanged : OrbitEvent
+    data class NetworkChanged(val network: NetworkStatus) : OrbitEvent
+
     /** A message became durable locally. Upsert by [Message.id]. */
     data class MessageAdded(val message: Message) : OrbitEvent
 
@@ -80,8 +88,27 @@ class OrbitClient internal constructor(
 
     suspend fun snapshot(): Snapshot {
         val result = call(WireCommand.GetSnapshot) as WireResult.Snapshot
-        return Snapshot(result.identity, result.profile, result.conversations)
+        return Snapshot(result.identity, result.profile, result.conversations, result.network)
     }
+
+    suspend fun registerNode(node: String, registrationCode: String? = null): NetworkStatus =
+        (call(WireCommand.RegisterNode(node, registrationCode)) as WireResult.NodeRegistered).network
+
+    suspend fun createInvite(): String = (call(WireCommand.CreateInvite) as WireResult.InviteCreated).text
+
+    suspend fun inspectInvite(text: String): InvitePreview =
+        (call(WireCommand.InspectInvite(text)) as WireResult.InviteInspected).preview
+
+    suspend fun acceptInvite(text: String): Contact =
+        (call(WireCommand.AcceptInvite(text)) as WireResult.ContactAdded).contact
+
+    /** Pairwise group. `members` are ready direct conversations. */
+    suspend fun createGroup(title: String, members: List<ConversationId>): Conversation =
+        (call(WireCommand.CreateGroup(title, members)) as WireResult.RoomCreated).conversation
+
+    /** Pairwise channel. Only this device can publish. */
+    suspend fun createChannel(title: String, members: List<ConversationId>): Conversation =
+        (call(WireCommand.CreateChannel(title, members)) as WireResult.RoomCreated).conversation
 
     /** Messages older than [beforeSeq] (newest when null), oldest first. */
     suspend fun messages(conversationId: ConversationId, beforeSeq: Long? = null, limit: Int = 50): MessagePage {
@@ -95,10 +122,43 @@ class OrbitClient internal constructor(
         return result.message
     }
 
+    /** Replaces the author's own text. The contact receives the same change. */
+    suspend fun editText(conversationId: ConversationId, messageId: MessageId, text: String): Message {
+        val result = call(WireCommand.EditText(conversationId, messageId, text)) as WireResult.MessageSaved
+        return result.message
+    }
+
+    /** Removes the author's own text. The contact sees a deletion. */
+    suspend fun deleteText(conversationId: ConversationId, messageId: MessageId): Message {
+        val result = call(WireCommand.DeleteText(conversationId, messageId)) as WireResult.MessageSaved
+        return result.message
+    }
+
     /** Sets the local profile; the name is required, [about] may be empty. */
     suspend fun updateProfile(displayName: String, about: String): Profile {
         val result = call(WireCommand.UpdateProfile(displayName, about)) as WireResult.ProfileUpdated
         return result.profile
+    }
+
+    /**
+     * Sets the profile picture. [imageBase64] is standard base64 of a JPEG or PNG,
+     * at most 32 KiB. An empty string clears it.
+     */
+    suspend fun setAvatar(imageBase64: String): Profile {
+        val result = call(WireCommand.SetAvatar(imageBase64)) as WireResult.ProfileUpdated
+        return result.profile
+    }
+
+    /** Sends a 16 kHz mono 16-bit PCM WAV, at most 60 seconds. */
+    suspend fun sendVoice(conversationId: ConversationId, wavBase64: String): Message {
+        val result = call(WireCommand.SendVoice(conversationId, wavBase64)) as WireResult.MessageSaved
+        return result.message
+    }
+
+    /** Stored WAV for a voice note, standard base64. */
+    suspend fun readVoice(messageId: MessageId): String {
+        val result = call(WireCommand.ReadVoice(messageId)) as WireResult.Voice
+        return result.wavBase64
     }
 
     /** Closes the engine and fails pending calls. Idempotent. */
@@ -155,6 +215,8 @@ class OrbitClient internal constructor(
 
     private suspend fun dispatch(event: WireEvent) {
         when (event) {
+            WireEvent.ContactsChanged -> mutableEvents.emit(OrbitEvent.ContactsChanged)
+            is WireEvent.NetworkChanged -> mutableEvents.emit(OrbitEvent.NetworkChanged(event.network))
             is WireEvent.CommandSucceeded -> lock.withLock { pending.remove(event.requestId) }?.complete(event.result)
             is WireEvent.CommandFailed -> lock.withLock { pending.remove(event.requestId) }
                 ?.completeExceptionally(OrbitException(OrbitErrorCode.of(event.error.code), event.error.message))

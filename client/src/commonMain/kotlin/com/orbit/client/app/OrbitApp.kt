@@ -14,6 +14,9 @@ import androidx.compose.ui.Modifier
 import com.orbit.client.designsystem.OrbitTheme
 import com.orbit.client.designsystem.Strings
 import com.orbit.client.features.chat.MessengerScreen
+import com.orbit.client.features.chat.VoiceHost
+import com.orbit.client.features.host.NodeHost
+import com.orbit.client.features.settings.AvatarPick
 import com.orbit.client.features.lock.LockScreen
 import com.orbit.client.features.settings.SecurityActions
 import com.orbit.client.features.onboarding.OnboardingScreen
@@ -27,6 +30,11 @@ fun OrbitApp(
     preferences: PreferencesRepository,
     navigation: ShellNavigation = remember { ShellNavigation() },
     linuxDesktop: Boolean = false,
+    prepareLocalNetwork: (suspend () -> Boolean)? = null,
+    localNetworkHint: String = Strings.localNetworkHint,
+    nodeHost: NodeHost? = null,
+    voice: VoiceHost? = null,
+    pickAvatar: (suspend () -> AvatarPick)? = null,
 ) {
     val prefs by preferences.state.collectAsState()
     OrbitTheme(prefs.theme) {
@@ -54,6 +62,11 @@ fun OrbitApp(
                         session = current.session,
                         preferences = preferences,
                         navigation = navigation,
+                        prepareLocalNetwork = prepareLocalNetwork,
+                        localNetworkHint = localNetworkHint,
+                        nodeHost = nodeHost,
+                        voice = voice,
+                        pickAvatar = pickAvatar,
                         security = object : SecurityActions {
                             override val passcodeEnabled = current.passcodeEnabled
 
