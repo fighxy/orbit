@@ -5,6 +5,8 @@
 //! * `c_api`: C ABI for Kotlin/Native (iOS) via cinterop; the header is
 //!   generated into `include/orbit.h` by cbindgen.
 //! * `jni_api`: JNI for Android and the JVM desktop client.
+//! * `desktop_keyring`: JNI access to the OS keyring for the JVM desktop
+//!   client's secure store (not part of the engine contract).
 //!
 //! Commands, results and events cross the boundary as UTF-8 JSON defined by
 //! `orbit_core::engine`. Engines are addressed by opaque `u64` handles that
@@ -12,6 +14,8 @@
 //! freed memory. No panic crosses the boundary.
 
 pub mod c_api;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod desktop_keyring;
 mod handles;
 #[cfg(not(target_os = "ios"))]
 mod jni_api;

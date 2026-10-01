@@ -21,6 +21,11 @@ zeroize.workspace = true
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 jni.workspace = true
 
+# Desktop secure store (Keychain, Credential Manager, Secret Service) for the
+# JVM client. Android and iOS use their own Kotlin secure store adapters.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+keyring.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

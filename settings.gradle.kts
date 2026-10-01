@@ -7,6 +7,7 @@ pluginManagement {
 }
 
 dependencyResolutionManagement {
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
     repositories {
         google()
         mavenCentral()
@@ -16,3 +17,6 @@ dependencyResolutionManagement {
 rootProject.name = "orbit"
 
 include(":shared")
+// include(":client")
+// include(":apps:desktop")
+// include(":apps:android")
