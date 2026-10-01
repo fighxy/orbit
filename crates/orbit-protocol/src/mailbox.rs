@@ -30,6 +30,8 @@ pub const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_FETCH_ITEMS: u32 = 100;
 /// Most item IDs in one acknowledgement.
 pub const MAX_ACK_ITEMS: usize = 500;
+/// Longest time a node holds a [`Request::Wait`].
+pub const MAX_WAIT_MS: u32 = 30_000;
 
 const AUTH_LABEL: &[u8] = b"orbit/mailbox/auth/v1\0";
 
@@ -149,6 +151,11 @@ pub enum Request {
     Ack { ids: Vec<ItemId> },
     /// Usage and limits of the authenticated mailbox (owner only).
     Status,
+    /// Long poll (owner only): answers as soon as the mailbox holds an item
+    /// with `seq > after_seq`, or after `timeout_ms` (at most
+    /// [`MAX_WAIT_MS`]). Has no side effects, so nodes serve it alongside
+    /// other requests of the connection; one wait per connection at a time.
+    Wait { after_seq: u64, timeout_ms: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,6 +181,10 @@ pub enum Response {
         removed: u32,
     },
     Status(MailboxStatus),
+    /// Result of [`Request::Wait`]: `ready` is false when the wait timed out.
+    Waited {
+        ready: bool,
+    },
     Error {
         code: ErrorCode,
         message: String,

@@ -165,6 +165,16 @@ impl MailboxClient {
         }
     }
 
+    /// Long poll: true as soon as the mailbox holds an item after
+    /// `after_seq`, false after `timeout_ms`. Other requests on this client
+    /// may run concurrently.
+    pub async fn wait(&self, after_seq: u64, timeout_ms: u32) -> Result<bool> {
+        match self.call(&Request::Wait { after_seq, timeout_ms }).await? {
+            Response::Waited { ready } => Ok(ready),
+            _ => Err(TransportError::Protocol("expected a wait result")),
+        }
+    }
+
     pub async fn status(&self) -> Result<MailboxStatus> {
         match self.call(&Request::Status).await? {
             Response::Status(status) => Ok(status),

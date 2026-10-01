@@ -1,18 +1,20 @@
 //! QUIC server for the mailbox protocol.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use iroh::endpoint::presets;
 use iroh::{Endpoint, RelayMode, SecretKey};
 use orbit_protocol::mailbox::{
-    ALPN, ErrorCode, MAX_ACK_ITEMS, MAX_ENVELOPE_BYTES, MAX_FETCH_ITEMS, MAX_REQUEST_BYTES, MailboxId, Request,
-    Response, verify_auth,
+    ALPN, ErrorCode, MAX_ACK_ITEMS, MAX_ENVELOPE_BYTES, MAX_FETCH_ITEMS, MAX_REQUEST_BYTES, MAX_WAIT_MS, MailboxId,
+    Request, Response, verify_auth,
 };
 use orbit_protocol::{NodeAddress, decode, encode};
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
@@ -44,6 +46,32 @@ struct Context {
     config: MailboxConfig,
     registration_code_hash: Option<[u8; 32]>,
     store: Arc<Mutex<Store>>,
+    waiters: Waiters,
+}
+
+/// Wakes long polls of a mailbox when something is deposited into it.
+#[derive(Default)]
+struct Waiters(Mutex<HashMap<MailboxId, Weak<Notify>>>);
+
+impl Waiters {
+    fn subscribe(&self, mailbox: &MailboxId) -> Arc<Notify> {
+        let mut map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(notify) = map.get(mailbox).and_then(Weak::upgrade) {
+            return notify;
+        }
+        // Entries of finished waits are dropped lazily, on insertion.
+        map.retain(|_, notify| notify.strong_count() > 0);
+        let notify = Arc::new(Notify::new());
+        map.insert(*mailbox, Arc::downgrade(&notify));
+        notify
+    }
+
+    fn wake(&self, mailbox: &MailboxId) {
+        let map = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(notify) = map.get(mailbox).and_then(Weak::upgrade) {
+            notify.notify_waiters();
+        }
+    }
 }
 
 impl Node {
@@ -86,6 +114,7 @@ impl Node {
             registration_code_hash: config.mailbox.registration_code.as_deref().map(code_hash),
             config: config.mailbox.clone(),
             store: Arc::new(Mutex::new(store)),
+            waiters: Waiters::default(),
         });
 
         let accept = tokio::spawn(accept_loop(endpoint.clone(), context.clone()));
@@ -151,6 +180,7 @@ struct ConnectionState {
     mailbox: Option<MailboxId>,
     window_start: Instant,
     window_requests: u32,
+    waiting: Arc<AtomicBool>,
 }
 
 async fn serve_connection(connection: iroh::endpoint::Connection, context: Arc<Context>) {
@@ -160,20 +190,101 @@ async fn serve_connection(connection: iroh::endpoint::Connection, context: Arc<C
         mailbox: None,
         window_start: Instant::now(),
         window_requests: 0,
+        waiting: Arc::new(AtomicBool::new(false)),
     };
-    // Streams are served one at a time, so requests on a connection apply in order.
+    // Streams are served one at a time, so requests on a connection apply in
+    // order. The only exception is `Wait`, which changes nothing.
     while let Ok((mut send, mut recv)) = connection.accept_bi().await {
         let response = match recv.read_to_end(MAX_REQUEST_BYTES).await {
             Ok(bytes) => match decode::<Request>(&bytes) {
+                Ok(Request::Wait { after_seq, timeout_ms }) => {
+                    match start_wait(&context, &mut state, after_seq, timeout_ms) {
+                        Ok(wait) => {
+                            let connection = connection.clone();
+                            tokio::spawn(async move {
+                                tokio::select! {
+                                    response = wait => { let _ = reply(&mut send, &response).await; }
+                                    _ = connection.closed() => {}
+                                }
+                            });
+                            continue;
+                        }
+                        Err(response) => response,
+                    }
+                }
                 Ok(request) => handle(&context, &mut state, request).await,
                 Err(_) => error(ErrorCode::BadRequest, "malformed request"),
             },
             Err(iroh::endpoint::ReadToEndError::TooLong) => error(ErrorCode::TooLarge, "request too large"),
             Err(_) => break,
         };
-        let Ok(bytes) = encode(&response) else { break };
-        if send.write_all(&bytes).await.is_err() || send.finish().is_err() {
+        if !reply(&mut send, &response).await {
             break;
+        }
+    }
+}
+
+async fn reply(send: &mut iroh::endpoint::SendStream, response: &Response) -> bool {
+    let Ok(bytes) = encode(response) else { return false };
+    send.write_all(&bytes).await.is_ok() && send.finish().is_ok()
+}
+
+/// Validates a long poll and returns the future that answers it.
+fn start_wait(
+    context: &Arc<Context>,
+    state: &mut ConnectionState,
+    after_seq: u64,
+    timeout_ms: u32,
+) -> Result<impl Future<Output = Response> + Send + 'static, Response> {
+    if !allow(state, context.config.max_requests_per_minute) {
+        return Err(error(ErrorCode::RateLimited, "too many requests; slow down"));
+    }
+    let Some(mailbox) = state.mailbox else {
+        return Err(unauthenticated());
+    };
+    if timeout_ms == 0 || timeout_ms > MAX_WAIT_MS {
+        return Err(error(ErrorCode::BadRequest, "timeout out of range"));
+    }
+    if state.waiting.swap(true, Ordering::AcqRel) {
+        return Err(error(ErrorCode::BadRequest, "another wait is in progress"));
+    }
+    let guard = WaitGuard(state.waiting.clone());
+    let context = context.clone();
+    Ok(async move {
+        let _guard = guard;
+        wait_for_items(
+            &context,
+            mailbox,
+            after_seq,
+            Duration::from_millis(u64::from(timeout_ms)),
+        )
+        .await
+    })
+}
+
+struct WaitGuard(Arc<AtomicBool>);
+
+impl Drop for WaitGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+async fn wait_for_items(context: &Arc<Context>, mailbox: MailboxId, after_seq: u64, timeout: Duration) -> Response {
+    let notify = context.waiters.subscribe(&mailbox);
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        // Registered before the check so a deposit in between is not missed.
+        let notified = notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        match blocking(context, move |s| s.fetch(&mailbox, after_seq, 1, now_ms())).await {
+            Ok((items, _)) if !items.is_empty() => return Response::Waited { ready: true },
+            Ok(_) => {}
+            Err(response) => return response,
+        }
+        if tokio::time::timeout_at(deadline, notified).await.is_err() {
+            return Response::Waited { ready: false };
         }
     }
 }
@@ -256,11 +367,16 @@ async fn handle(context: &Arc<Context>, state: &mut ConnectionState, request: Re
                 Err(response) => return response,
             }
             match blocking(context, move |s| s.deposit(&mailbox, &envelope, now_ms())).await {
-                Ok((id, deposited)) => Response::Deposited {
-                    id,
-                    duplicate: deposited.duplicate,
-                    expires_at_ms: deposited.expires_at_ms,
-                },
+                Ok((id, deposited)) => {
+                    if !deposited.duplicate {
+                        context.waiters.wake(&mailbox);
+                    }
+                    Response::Deposited {
+                        id,
+                        duplicate: deposited.duplicate,
+                        expires_at_ms: deposited.expires_at_ms,
+                    }
+                }
                 Err(response) => response,
             }
         }
@@ -297,6 +413,8 @@ async fn handle(context: &Arc<Context>, state: &mut ConnectionState, request: Re
                 Err(response) => response,
             }
         }
+        // Served by `start_wait`; reaching this arm is a server bug.
+        Request::Wait { .. } => error(ErrorCode::Internal, "wait was not dispatched"),
     }
 }
 

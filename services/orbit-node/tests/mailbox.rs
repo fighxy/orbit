@@ -250,3 +250,45 @@ async fn request_rate_is_limited_per_connection() {
     ));
     node.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wait_wakes_on_deposit_and_does_not_block_other_requests() {
+    let dir = tempfile::tempdir().unwrap();
+    let node = Node::start(config(dir.path(), limits())).await.unwrap();
+    let recipient = key(5);
+    let mailbox = MailboxId(recipient.verifying_key().to_bytes());
+    let token = DepositToken::generate().unwrap();
+
+    let mut owner = connect(&node).await;
+    assert_eq!(remote_code(owner.wait(0, 1_000).await), ErrorCode::Unauthenticated);
+    owner.authenticate(&recipient, Some(CODE)).await.unwrap();
+    owner.add_deposit_token(&token).await.unwrap();
+    assert_eq!(remote_code(owner.wait(0, 0).await), ErrorCode::BadRequest);
+    assert_eq!(remote_code(owner.wait(0, 60_000).await), ErrorCode::BadRequest);
+
+    // Empty mailbox: the wait times out.
+    let started = std::time::Instant::now();
+    assert!(!owner.wait(0, 300).await.unwrap());
+    assert!(started.elapsed() >= std::time::Duration::from_millis(250));
+
+    let owner = std::sync::Arc::new(owner);
+    let waiting = {
+        let owner = owner.clone();
+        tokio::spawn(async move { owner.wait(0, 20_000).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // The pending wait neither blocks the connection nor allows a second wait.
+    owner.status().await.unwrap();
+    assert_eq!(remote_code(owner.wait(0, 1_000).await), ErrorCode::BadRequest);
+
+    let started = std::time::Instant::now();
+    let sender = connect(&node).await;
+    sender.deposit(&mailbox, &token, b"wake up").await.unwrap();
+    assert!(waiting.await.unwrap().unwrap());
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+
+    // Items already present answer at once; seen items do not.
+    let (items, _) = owner.fetch(0, 10).await.unwrap();
+    assert!(owner.wait(0, 20_000).await.unwrap());
+    assert!(!owner.wait(items[0].seq, 200).await.unwrap());
+}
