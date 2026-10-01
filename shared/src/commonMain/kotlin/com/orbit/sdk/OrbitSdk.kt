@@ -97,6 +97,30 @@ class OrbitSdk(
         }
     }
 
+    /**
+     * Removes the identity secret from the secure store.
+     *
+     * When the secret is sealed, [passcode] is verified first and a wrong
+     * passcode leaves the account in place. This does not wipe [dataDir]:
+     * the caller must close the engine (it holds `engine.lock`) and delete
+     * that directory, including `accounts/<hex>/state.sqlite`, or the next
+     * account would sit beside leftover ciphertext.
+     */
+    suspend fun deleteIdentity(passcode: String? = null) {
+        when (identityStatus()) {
+            IdentityStatus.Missing -> return
+            IdentityStatus.PasscodeRequired -> {
+                val secret = readPlainSecret(passcode)
+                secret.fill(0)
+            }
+            IdentityStatus.Ready -> Unit
+        }
+        secretStore.delete(identityKey)
+    }
+
+    /** Absolute directory passed to the engine. Safe to delete only after the engine is closed. */
+    fun dataDirectory(): String = dataDir
+
     private suspend fun readPlainSecret(passcode: String?): ByteArray {
         val stored = secretStore.read(identityKey)
             ?: throw OrbitException(OrbitErrorCode.NotFound, "no identity is stored for key '$identityKey'")
