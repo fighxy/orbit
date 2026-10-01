@@ -4,7 +4,6 @@
 use std::fs;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::path::{Path, PathBuf};
-
 #[cfg(windows)]
 use std::io::Write;
 #[cfg(windows)]
@@ -158,6 +157,8 @@ pub fn is_shareable(ip: Ipv4Addr) -> bool {
 }
 
 fn primary_ipv4() -> Option<Ipv4Addr> {
+    // UDP connect does not send a packet; the kernel fills in the source
+    // address of the default route, which is the LAN address to share.
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
     socket.connect("1.1.1.1:80").ok()?;
     match socket.local_addr().ok()? {
