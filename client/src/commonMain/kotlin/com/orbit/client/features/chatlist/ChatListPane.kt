@@ -15,9 +15,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -27,7 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.orbit.client.designsystem.OrbitMark
+import com.orbit.client.designsystem.Avatar
 import com.orbit.client.designsystem.Strings
 import com.orbit.client.designsystem.formatClockTime
 import com.orbit.sdk.model.Conversation
@@ -40,9 +42,12 @@ import com.orbit.sdk.model.PublicIdentity
 fun ChatListPane(
     identity: PublicIdentity?,
     conversations: List<Conversation>,
+    profileName: String?,
     selected: ConversationId?,
     banner: String?,
     onSelect: (ConversationId) -> Unit,
+    onOpenSettings: () -> Unit,
+    onDismissBanner: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.background(MaterialTheme.colorScheme.surface)) {
@@ -50,12 +55,29 @@ fun ChatListPane(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OrbitMark(size = 28.dp)
+            Avatar(profileName, size = 36.dp, modifier = Modifier.clip(CircleShape).clickable(onClick = onOpenSettings))
             Spacer(Modifier.width(12.dp))
-            Text(Strings.chats, style = MaterialTheme.typography.titleLarge)
+            Column(Modifier.weight(1f)) {
+                Text(Strings.chats, style = MaterialTheme.typography.titleLarge)
+                profileName?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            IconButton(onClick = onOpenSettings) {
+                Icon(Icons.Filled.Settings, contentDescription = Strings.settings)
+            }
         }
         if (banner != null) {
-            Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = Modifier.fillMaxWidth()) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onDismissBanner),
+            ) {
                 Text(
                     banner,
                     color = MaterialTheme.colorScheme.onErrorContainer,

@@ -7,6 +7,7 @@ import com.orbit.sdk.OrbitException
 import com.orbit.sdk.model.Conversation
 import com.orbit.sdk.model.ConversationId
 import com.orbit.sdk.model.Message
+import com.orbit.sdk.model.Profile
 import com.orbit.sdk.model.PublicIdentity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -44,6 +45,9 @@ class ChatSession(
 
     private val mutableIdentity = MutableStateFlow<PublicIdentity?>(null)
     val identity: StateFlow<PublicIdentity?> = mutableIdentity.asStateFlow()
+
+    private val mutableProfile = MutableStateFlow<Profile?>(null)
+    val profile: StateFlow<Profile?> = mutableProfile.asStateFlow()
 
     private val mutableConversations = MutableStateFlow<List<Conversation>>(emptyList())
     val conversations: StateFlow<List<Conversation>> = mutableConversations.asStateFlow()
@@ -104,6 +108,22 @@ class ChatSession(
 
     fun dismissError() = mutableChat.update { it.copy(error = null) }
 
+    /** Saves the profile; returns a user-facing error or null on success. */
+    suspend fun updateProfile(displayName: String, about: String): String? = try {
+        mutableProfile.value = backend.updateProfile(displayName, about)
+        null
+    } catch (e: OrbitException) {
+        Strings.describe(e)
+    }
+
+    fun showBanner(message: String) {
+        mutableBanner.value = message
+    }
+
+    fun dismissBanner() {
+        mutableBanner.value = null
+    }
+
     suspend fun close() {
         scope.cancel()
         backend.close()
@@ -112,7 +132,7 @@ class ChatSession(
     private suspend fun onEvent(event: OrbitEvent) {
         when (event) {
             is OrbitEvent.MessageAdded -> upsert(event.message)
-            is OrbitEvent.ProfileChanged -> Unit
+            is OrbitEvent.ProfileChanged -> mutableProfile.value = event.profile
             OrbitEvent.ResyncRequired -> {
                 reloadSnapshot()
                 mutableChat.value.conversationId?.let { loadNewest(it) }
@@ -124,6 +144,7 @@ class ChatSession(
         try {
             val snapshot = backend.snapshot()
             mutableIdentity.value = snapshot.identity
+            mutableProfile.value = snapshot.profile
             mutableConversations.value = snapshot.conversations
             mutableBanner.value = null
         } catch (e: OrbitException) {

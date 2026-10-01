@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import com.orbit.client.designsystem.OrbitTheme
 import com.orbit.client.designsystem.Strings
 import com.orbit.client.features.chat.MessengerScreen
+import com.orbit.client.features.lock.LockScreen
+import com.orbit.client.features.settings.SecurityActions
 import com.orbit.client.features.onboarding.OnboardingScreen
 import com.orbit.client.features.status.LoadingScreen
 import com.orbit.client.features.status.StatusScreen
@@ -27,10 +29,8 @@ fun OrbitApp(controller: AppController, linuxDesktop: Boolean = false) {
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                 when (val current = state) {
                     AppState.Starting -> LoadingScreen()
-                    is AppState.NeedsIdentity -> OnboardingScreen(
-                        creating = current.creating,
-                        onCreate = controller::createIdentity,
-                    )
+                    is AppState.Onboarding -> OnboardingScreen(current, controller)
+                    is AppState.Locked -> LockScreen(current, onUnlock = controller::unlock)
                     is AppState.SecureStorageUnavailable -> StatusScreen(
                         title = Strings.secureStorageTitle,
                         body = Strings.secureStorageBody,
@@ -43,7 +43,20 @@ fun OrbitApp(controller: AppController, linuxDesktop: Boolean = false) {
                         body = current.details,
                         onRetry = controller::start,
                     )
-                    is AppState.Ready -> MessengerScreen(current.session)
+                    is AppState.Ready -> MessengerScreen(
+                        session = current.session,
+                        security = object : SecurityActions {
+                            override val passcodeEnabled = current.passcodeEnabled
+
+                            override suspend fun setPasscode(currentPasscode: String?, newPasscode: String) =
+                                controller.setPasscode(currentPasscode, newPasscode)
+
+                            override suspend fun removePasscode(currentPasscode: String) =
+                                controller.removePasscode(currentPasscode)
+
+                            override fun lockNow() = controller.lockNow()
+                        },
+                    )
                 }
             }
         }

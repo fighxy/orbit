@@ -10,14 +10,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.orbit.client.features.chatlist.ChatListPane
+import com.orbit.client.features.settings.SecurityActions
+import com.orbit.client.features.settings.SettingsScreen
 
 /** Two panes on wide windows; list or chat on narrow screens. */
 @Composable
-fun MessengerScreen(session: ChatSession) {
+fun MessengerScreen(session: ChatSession, security: SecurityActions) {
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    if (showSettings) {
+        SettingsScreen(session, security, onBack = { showSettings = false })
+        return
+    }
     val identity by session.identity.collectAsState()
+    val profile by session.profile.collectAsState()
     val conversations by session.conversations.collectAsState()
     val chat by session.chat.collectAsState()
     val banner by session.banner.collectAsState()
@@ -34,8 +45,11 @@ fun MessengerScreen(session: ChatSession) {
                     identity = identity,
                     conversations = conversations,
                     selected = chat.conversationId,
+                    profileName = profile?.displayName,
                     banner = banner,
                     onSelect = session::select,
+                    onOpenSettings = { showSettings = true },
+                    onDismissBanner = session::dismissBanner,
                     modifier = Modifier.width(320.dp).fillMaxHeight(),
                 )
                 VerticalDivider()
@@ -54,8 +68,11 @@ fun MessengerScreen(session: ChatSession) {
                 identity = identity,
                 conversations = conversations,
                 selected = null,
+                profileName = profile?.displayName,
                 banner = banner,
                 onSelect = session::select,
+                onOpenSettings = { showSettings = true },
+                onDismissBanner = session::dismissBanner,
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
