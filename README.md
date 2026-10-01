@@ -55,7 +55,7 @@ started. A voice note is a chunked 16 kHz PCM WAV, at most 60 seconds, in a
 direct chat or in saved messages. Android records and plays it. Desktop
 records and plays through the JVM mixer and scales a chosen JPEG; those
 helpers were unit-tested, the window was not clicked, and no new MSI was
-built. iOS does not record or play. There is no SFU. The native contract is ABI 6.
+built. iOS source records and plays through AVFoundation and scales a chosen photo to a JPEG of at most 32 KiB. `:client:jvmTest` passed, including the 32/48 kHz fold. The Apple target was not compiled on Windows, and no simulator or device was run. There is no SFU. The native contract is ABI 6.
 An installed MSI from ABI 5 or earlier will not load this SDK. The debug APK
 `apps/android/build/outputs/apk/debug/android-debug.apk` was built from this
 tree and was not installed on a phone. This file does not ask for a new MSI.

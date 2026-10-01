@@ -35,6 +35,39 @@ class PcmWavTest {
     }
 
     @Test
+    fun extraChunkIsKeptAndFoldedFromStereo48k() {
+        val listed = byteArrayOf(
+            'R'.code.toByte(), 'I'.code.toByte(), 'F'.code.toByte(), 'F'.code.toByte(),
+            0, 0, 0, 0,
+            'W'.code.toByte(), 'A'.code.toByte(), 'V'.code.toByte(), 'E'.code.toByte(),
+            'f'.code.toByte(), 'm'.code.toByte(), 't'.code.toByte(), ' '.code.toByte(),
+            16, 0, 0, 0,
+            1, 0,
+            2, 0,
+            0x80.toByte(), 0xBB.toByte(), 0, 0,
+            0, 0, 0, 0,
+            4, 0,
+            16, 0,
+            'L'.code.toByte(), 'I'.code.toByte(), 'S'.code.toByte(), 'T'.code.toByte(),
+            4, 0, 0, 0,
+            'I'.code.toByte(), 'N'.code.toByte(), 'F'.code.toByte(), 'O'.code.toByte(),
+            'd'.code.toByte(), 'a'.code.toByte(), 't'.code.toByte(), 'a'.code.toByte(),
+            12, 0, 0, 0,
+            0, 0, 0, 0,
+            10, 0, 0, 0,
+            20, 0, 0, 0,
+        )
+        val captured = assertNotNull(VoicePcm.readDeviceWav(listed))
+        assertEquals(48_000, captured.rate)
+        assertEquals(2, captured.channels)
+        val folded = VoicePcm.toMono16k(captured.pcm, captured.rate, captured.channels)
+        assertEquals(2, folded.size)
+        assertEquals(10, folded[0].toInt() and 0xFF)
+        assertEquals(0, folded[1].toInt() and 0xFF)
+        assertNull(VoicePcm.wavPcm16le(listed))
+    }
+
+    @Test
     fun stereoHeaderIsNotPlayable() {
         val pcm = ByteArray(3_200)
         val wav = VoicePcm.pcm16leToWav(pcm)

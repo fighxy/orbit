@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.orbit.client.app.PreferencesRepository
 import com.orbit.client.app.ShellNavigation
+import com.orbit.client.designsystem.Strings
 import com.orbit.client.features.chatlist.ChatListPane
 import com.orbit.client.features.contacts.ContactsScreen
 import com.orbit.client.features.host.HostNodeScreen
@@ -35,6 +36,7 @@ fun MessengerScreen(
     preferences: PreferencesRepository,
     navigation: ShellNavigation,
     prepareLocalNetwork: (suspend () -> Boolean)? = null,
+    localNetworkHint: String = Strings.localNetworkHint,
     nodeHost: NodeHost? = null,
     voice: VoiceHost? = null,
     pickAvatar: (suspend () -> AvatarPick)? = null,
@@ -80,6 +82,7 @@ fun MessengerScreen(
                     onBack = { navigation.contactsOpen = false },
                     onContactAdded = { navigation.contactsOpen = false },
                     prepareLocalNetwork = prepareLocalNetwork,
+                    localNetworkHint = localNetworkHint,
                 )
                 navigation.settingsOpen -> SettingsScreen(
                     session,
@@ -156,6 +159,7 @@ fun MessengerScreen(
                         onBack = { navigation.contactsOpen = false },
                         onContactAdded = { navigation.contactsOpen = false },
                         prepareLocalNetwork = prepareLocalNetwork,
+                        localNetworkHint = localNetworkHint,
                     )
                     navigation.settingsOpen -> SettingsScreen(
                         session,

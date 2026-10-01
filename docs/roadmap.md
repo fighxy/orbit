@@ -38,7 +38,7 @@ required. Those statements are from stage 0, not a new run for this note.
 - [ ] FFI ownership, cancel/close races, event wait, and snapshot recovery. _Stage 0 tests cover close, cancel, and `resync_required`. That is not a new device experiment._
 - [ ] An E2EE candidate on two devices, crypto-state persistence, and crash recovery. _Interim HPKE is in the tree and has no forward secrecy and no ratchet. OpenMLS is not started._
 - [ ] A voice experiment: three devices through a ready self-hosted SFU. _Not started. No SFU in the tree._
-- [ ] Media adapters on iOS, Android, and desktop: devices, interruptions, Bluetooth, lifecycle. _Android and desktop record and play a voice note. That is not a device picker, an interruption, Bluetooth, or a lifecycle trial. iOS has no capture._
+- [ ] Media adapters on iOS, Android, and desktop: devices, interruptions, Bluetooth, lifecycle. _Android and desktop record and play a voice note. iOS source records and plays and commits the take when the app backgrounds. That is not a device picker, an interruption trial, Bluetooth, or a run on a device. The Apple target was not compiled on Windows._
 - [ ] Record chosen versions, results, and reasons in their own ADRs. _No transport or media ADR beyond ADR 0001._
 
 Criterion: the expensive dependencies are confirmed by programs on real
@@ -106,13 +106,13 @@ at most 60 seconds, split into slices that fit the 64 KiB envelope. The
 receiver checks the SHA-256 before storing it. The bubble shows duration and
 a waveform. Android and desktop record and play that WAV in a direct chat and
 in saved messages. Desktop uses the JVM mixer; that window was not clicked.
-iOS does not show those buttons. The codec is not Opus.
+iOS source shows those buttons and records through AVAudioRecorder. That source was not compiled on Windows and was not run on a device. The codec is not Opus.
 A video circle is not implemented. A profile picture is a separate JPEG or
 PNG of at most 32 KiB; it does not ride inside the invite. A debug APK was
 assembled and was not installed on a phone.
 
 - [ ] File and photo first: durable manifest and blob, upload and download, cancel and resume, integrity.
-- [ ] Then a voice note: capture, duration, waveform, playback. _Duration and waveform travel with the note, and a core test reassembles the WAV. Android has record and speaker playback in the client. That path was not tapped on a device. Desktop records and plays through javax.sound; the 32/48 kHz integer fold and stereo left-channel downmix are unit-tested. The window was not clicked and no new MSI was built. iOS has no capture._
+- [ ] Then a voice note: capture, duration, waveform, playback. _Duration and waveform travel with the note, and a core test reassembles the WAV. Android has record and speaker playback in the client. That path was not tapped on a device. Desktop records and plays through javax.sound; the 32/48 kHz integer fold and stereo left-channel downmix are unit-tested. The window was not clicked and no new MSI was built. iOS source records and plays through AVFoundation and folds 32/48 kHz or stereo to 16 kHz mono. `:client:jvmTest` passed. The Apple target was not compiled on Windows, and no simulator or device was run._
 - [ ] Then a video note: capture, preview, rotation, round mask.
 - [ ] Codec and container checks on every target platform.
 - [ ] Separate cache eviction, history retention, attachment keys, and backup.
@@ -181,6 +181,6 @@ re-run, are in [vertical slice](vertical-slice.md). Stage 2's full criterion
 stays open. Push and background delivery are not implemented. A voice note
 is a chunked PCM WAV. The core test reassembles it in saved messages and in
 a direct chat. Android and desktop record and play it. Those device paths
-were not tapped, and the desktop window was not clicked. iOS has no capture.
+were not tapped, and the desktop window was not clicked. iOS source records and plays through AVFoundation. That source was not compiled on Windows and was not run on a device.
 Video circles and voice rooms are not started. A profile picture is a JPEG
 or PNG of at most 32 KiB, outside the invite. Schema version is 7. ABI is 6.

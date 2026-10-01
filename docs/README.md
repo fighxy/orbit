@@ -33,8 +33,7 @@ invite), optional `orbit/mailbox/1` delivery, HPKE without forward secrecy,
 edit and delete, pairwise groups and channels, avatars, and chunked voice
 notes. Android records and plays a note and scales a gallery photo. Desktop
 does the same through `javax.sound` and a file dialog; `DesktopMediaTest`
-passed, the window was not clicked, and no new MSI was built. iOS hides
-record and playback. Onboarding is a display name and an optional passcode.
+passed, the window was not clicked, and no new MSI was built. iOS source records and plays through AVFoundation and scales a chosen photo to a JPEG of at most 32 KiB. `:client:jvmTest` passed. The Apple target was not compiled on Windows, and no simulator or device was run. Onboarding is a display name and an optional passcode.
 A 24-word phrase can restore the same Rust identity and is not on the screen
 or in the FFI. An installed MSI from before ABI 6 will not load this SDK.
 This index does not ask for a rebuild.

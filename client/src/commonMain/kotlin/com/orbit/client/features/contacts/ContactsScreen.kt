@@ -19,8 +19,13 @@ import kotlinx.coroutines.launch
 
 /** Common flow on Windows, Android and iOS; the Rust core owns registration and trust checks. */
 @Composable
-fun ContactsScreen(session: ChatSession, onBack: () -> Unit, onContactAdded: () -> Unit,
-    prepareLocalNetwork: (suspend () -> Boolean)? = null) {
+fun ContactsScreen(
+    session: ChatSession,
+    onBack: () -> Unit,
+    onContactAdded: () -> Unit,
+    prepareLocalNetwork: (suspend () -> Boolean)? = null,
+    localNetworkHint: String = Strings.localNetworkHint,
+) {
     val network by session.network.collectAsState()
     val scope = rememberCoroutineScope()
     var node by rememberSaveable { mutableStateOf(network.node.orEmpty()) }
@@ -90,7 +95,7 @@ fun ContactsScreen(session: ChatSession, onBack: () -> Unit, onContactAdded: () 
                     enabled = !busy, modifier = Modifier.fillMaxWidth(), maxLines = 3)
                 OutlinedTextField(code, { code = it }, label = { Text(Strings.registrationCode) },
                     enabled = !busy, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-                prepareLocalNetwork?.let { Text(Strings.localNetworkHint, style = MaterialTheme.typography.bodySmall) }
+                prepareLocalNetwork?.let { Text(localNetworkHint, style = MaterialTheme.typography.bodySmall) }
                 Button(onClick = { perform { prepareNetwork(); session.registerNode(node.trim(), code.takeIf { it.isNotBlank() }); code = "" } }, enabled = !busy && node.isNotBlank()) {
                     Text(Strings.registerOnServer)
                 }

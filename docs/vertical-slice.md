@@ -173,8 +173,7 @@ A line that opens at 32 or 48 kHz, or in stereo, is folded to 16 kHz mono
 (left channel) on the way in and expanded on the way out. `DesktopMediaTest`
 covers that fold. It does not open a microphone. `java.desktop` is on the
 jpackage module list so a future installer keeps the mixer and ImageIO. No
-new MSI was built. iOS hides the record and play controls, and avatar decode
-there returns null.
+new MSI was built. iOS source records and plays with AVAudioRecorder and AVAudioPlayer, folds 32/48 kHz or stereo (including a LIST or fact chunk) to 16 kHz mono, and scales a chosen photo to a JPEG of at most 32 KiB. JPEG and PNG avatars are decoded for the list and settings. `:client:jvmTest` passed, including that fold. The Apple targets are disabled on Windows, so this source was not compiled, and no simulator or device was run.
 
 ## Recovery phrase
 
@@ -212,8 +211,7 @@ calls. Do not read them as a clicked UI pass.
 Desktop records and plays a voice note through `javax.sound.sampled` and turns
 a chosen image into a JPEG of at most 32 KiB. `DesktopMediaTest` covers the
 32/48 kHz fold, stereo downmix, EXIF orientation 6, and a small square JPEG.
-The test does not open a microphone or a window. iOS still hides record and
-playback, and its avatar decode returns null. `java.desktop` is listed for a
+The test does not open a microphone or a window. iOS source records, plays, and scales a photo through AVFoundation and PHPicker. `:client:jvmTest` passed. The Apple target was not compiled here, and no simulator or device was run. `java.desktop` is listed for a
 future package so the mixer and ImageIO stay in the image. No new MSI was
 built.
 
@@ -260,7 +258,7 @@ are not a substitute.
   direct chats and saved messages. They are chunked under the 64 KiB envelope
   (`MAX_ENVELOPE_BYTES`) and checked with SHA-256 before the message appears.
   Not Opus. Groups and channels reject them. Desktop records and plays that
-  WAV through the JVM mixer. iOS has no capture. Video notes and voice rooms
+  WAV through the JVM mixer. iOS source records and plays through AVFoundation and was not compiled or run on this Windows host. Video notes and voice rooms
   are not started. There is no SFU.
 - The node operator still sees IP, sizes, times, and mailbox ids. The node
   does not see direct-message plaintext.

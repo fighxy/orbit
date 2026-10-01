@@ -6,6 +6,8 @@ import com.orbit.sdk.bridge.OrbitErrorCode
 /** UI text. Kept in one place so localization can replace it later. */
 object Strings {
     const val localNetworkHint = "Для узла в вашей Wi-Fi-сети Android запросит доступ к устройствам поблизости."
+    const val localNetworkHintIos =
+        "Для узла в вашей Wi-Fi-сети iOS спросит доступ к локальной сети, когда Orbit подключится. Узел с публичным адресом этого не требует."
     const val localNetworkDenied = "Доступ к локальной сети не разрешён. Для узла в Wi-Fi включите разрешение «Устройства поблизости» в настройках Orbit. Узел с публичным адресом остаётся доступен."
     const val appName = "Orbit"
     const val loading = "Открываем хранилище…"
