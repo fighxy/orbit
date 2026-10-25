@@ -1,6 +1,9 @@
 package com.orbit.client.app
 
 import androidx.compose.ui.window.ComposeUIViewController
+import com.orbit.client.designsystem.Strings
+import com.orbit.client.media.IosAvatarPicker
+import com.orbit.client.media.IosVoiceHost
 import com.orbit.sdk.OrbitSdk
 import com.orbit.sdk.bridge.IosNativeLibrary
 import com.orbit.sdk.platform.IosPaths
@@ -22,7 +25,20 @@ fun MainViewController(): UIViewController {
     val controller = AppController(sdk.asGateway(), MainScope())
     controller.start()
     val preferences = PreferencesRepository(UserDefaultsStorage())
-    return ComposeUIViewController { OrbitApp(controller, preferences) }
+    val voice = IosVoiceHost()
+    lateinit var root: UIViewController
+    val avatars = IosAvatarPicker { root }
+    root = ComposeUIViewController {
+        OrbitApp(
+            controller,
+            preferences,
+            prepareLocalNetwork = { true },
+            localNetworkHint = Strings.localNetworkHintIos,
+            voice = voice,
+            pickAvatar = { avatars.pick() },
+        )
+    }
+    return root
 }
 
 private class UserDefaultsStorage : PreferencesStorage {

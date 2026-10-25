@@ -4,4 +4,5 @@ headers = orbit.h
 headerFilter = orbit.h
 package = com.orbit.sdk.ffi
 staticLibraries = liborbit_ffi.a
-linkerOpts = -framework Security -framework CoreFoundation
+# Rust transport's netdev uses SystemConfiguration and Network on Apple targets.
+linkerOpts = -framework Security -framework CoreFoundation -framework SystemConfiguration -framework Network

@@ -43,6 +43,8 @@ pub enum Error {
     NetworkNotConfigured,
     #[error("invitation is invalid: {0}")]
     InvalidInvite(&'static str),
+    #[error("delivery failure: {0}")]
+    Network(&'static str),
 }
 
 /// Stable error codes. Values are part of the C ABI and must not be reused.
@@ -67,6 +69,7 @@ pub enum ErrorCode {
     WrongPasscode = 15,
     NetworkNotConfigured = 16,
     InvalidInvite = 17,
+    Network = 18,
 }
 
 impl Error {
@@ -89,6 +92,7 @@ impl Error {
             Error::WrongPasscode => ErrorCode::WrongPasscode,
             Error::NetworkNotConfigured => ErrorCode::NetworkNotConfigured,
             Error::InvalidInvite(_) => ErrorCode::InvalidInvite,
+            Error::Network(_) => ErrorCode::Network,
         }
     }
 

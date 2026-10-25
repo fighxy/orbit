@@ -26,6 +26,37 @@ pub(crate) struct SealedBody {
 }
 
 impl LocalCipher {
+    /// Protect non-message records with a separate, purpose-bound AAD domain.
+    pub fn seal_record(&self, purpose: &str, id: &[u8], plaintext: &[u8]) -> Result<SealedBody> {
+        let mut nonce = [0u8; NONCE_LEN];
+        getrandom::fill(&mut nonce).map_err(|_| Error::Random)?;
+        let aad = record_aad(purpose, id);
+        let ciphertext = self
+            .aead
+            .encrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: plaintext,
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| Error::Internal("record encryption failed"))?;
+        Ok(SealedBody { nonce, ciphertext })
+    }
+
+    pub fn open_record(&self, purpose: &str, id: &[u8], nonce: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> {
+        let nonce: [u8; NONCE_LEN] = nonce.try_into().map_err(|_| Error::Corrupted("record nonce"))?;
+        let aad = record_aad(purpose, id);
+        self.aead
+            .decrypt(
+                &XNonce::from(nonce),
+                Payload {
+                    msg: ciphertext,
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| Error::Corrupted("record authentication"))
+    }
     pub fn new(storage_key: &[u8; 32]) -> Self {
         let key = Key::from(*storage_key);
         Self {
@@ -85,6 +116,14 @@ impl LocalCipher {
             )
             .map_err(|_| Error::Corrupted("message body failed authentication"))
     }
+}
+
+fn record_aad(purpose: &str, id: &[u8]) -> Vec<u8> {
+    let mut aad = b"orbit/v1/local-record\0".to_vec();
+    aad.extend_from_slice(purpose.as_bytes());
+    aad.push(0);
+    aad.extend_from_slice(id);
+    aad
 }
 
 fn aad(message: &MessageId, conversation: &ConversationId) -> Vec<u8> {

@@ -21,6 +21,8 @@ targets:
         UILaunchScreen: {}
         # Compose Multiplatform renders at the display's full refresh rate.
         CADisableMinimumFrameDurationOnPhone: true
+        NSLocalNetworkUsageDescription: "Orbit подключается к выбранному вами узлу для обмена сообщениями."
+        NSMicrophoneUsageDescription: "Orbit использует микрофон, чтобы записать голосовое сообщение."
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
@@ -33,7 +35,7 @@ targets:
         # Only the arm64 simulator is built (Apple silicon); see shared/build.gradle.kts.
         EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
         FRAMEWORK_SEARCH_PATHS: "$(SRCROOT)/../../client/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)"
-        OTHER_LDFLAGS: ["-framework", "OrbitClient"]
+        OTHER_LDFLAGS: ["-framework", "OrbitClient", "-framework", "Security", "-framework", "CoreFoundation", "-framework", "SystemConfiguration", "-framework", "Network", "-framework", "AVFoundation", "-framework", "PhotosUI", "-framework", "CoreGraphics", "-framework", "UIKit"]
     preBuildScripts:
       - name: Build Kotlin framework
         basedOnDependencyAnalysis: false

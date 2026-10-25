@@ -7,7 +7,7 @@ use crate::domain::{ConversationId, ConversationKind};
 use crate::error::{Error, Result};
 use crate::identity::PublicIdentity;
 
-pub(super) const CURRENT_VERSION: i64 = 2;
+pub(super) const CURRENT_VERSION: i64 = 7;
 
 /// Upgrade steps; entry `n` moves the schema from version `n + 1` to `n + 2`.
 const UPGRADES: &[&str] = &[
@@ -18,6 +18,128 @@ CREATE TABLE profile (
     display_name  TEXT NOT NULL,
     about         TEXT NOT NULL,
     updated_at_ms INTEGER NOT NULL
+) STRICT;
+",
+    // v3: protected routing records, durable ciphertext outbox and inbox dedup.
+    "
+CREATE TABLE delivery_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    nonce BLOB NOT NULL,
+    ciphertext BLOB NOT NULL
+) STRICT;
+CREATE TABLE contacts (
+    conversation_id BLOB PRIMARY KEY REFERENCES conversations(id),
+    device_id BLOB NOT NULL UNIQUE CHECK (length(device_id) = 32),
+    nonce BLOB NOT NULL,
+    ciphertext BLOB NOT NULL,
+    ready INTEGER NOT NULL CHECK (ready IN (0, 1))
+) STRICT;
+CREATE TABLE invitations (
+    id BLOB PRIMARY KEY CHECK (length(id) = 16),
+    expires_at_ms INTEGER NOT NULL
+) STRICT;
+CREATE TABLE outbox (
+    id BLOB PRIMARY KEY CHECK (length(id) = 16),
+    conversation_id BLOB NOT NULL REFERENCES conversations(id),
+    message_id BLOB REFERENCES messages(id),
+    envelope BLOB NOT NULL,
+    route_nonce BLOB NOT NULL,
+    route_ciphertext BLOB NOT NULL
+) STRICT;
+CREATE TABLE processed_inbox (
+    id BLOB PRIMARY KEY CHECK (length(id) = 32),
+    accepted INTEGER NOT NULL CHECK (accepted IN (0, 1))
+) STRICT;
+",
+    // v4: message edits and deletes, plus revisions that arrive before the text.
+    "
+ALTER TABLE messages ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE messages ADD COLUMN edited_at_ms INTEGER;
+ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE pending_message_ops (
+    message_id BLOB PRIMARY KEY CHECK (length(message_id) = 16),
+    conversation_id BLOB NOT NULL,
+    author_account BLOB NOT NULL CHECK (length(author_account) = 32),
+    author_device BLOB NOT NULL CHECK (length(author_device) = 32),
+    revision INTEGER NOT NULL,
+    deleted INTEGER NOT NULL,
+    edited_at_ms INTEGER NOT NULL,
+    body_nonce BLOB NOT NULL,
+    body_ciphertext BLOB NOT NULL
+) STRICT;
+",
+    // v5: pairwise groups and channels. Pending rows exist before the room does,
+    // so they intentionally have no foreign key.
+    "
+CREATE TABLE rooms (
+    conversation_id BLOB PRIMARY KEY REFERENCES conversations(id),
+    title TEXT NOT NULL,
+    owner_device BLOB NOT NULL CHECK (length(owner_device) = 32)
+) STRICT;
+CREATE TABLE room_members (
+    conversation_id BLOB NOT NULL REFERENCES rooms(conversation_id),
+    device_id BLOB NOT NULL CHECK (length(device_id) = 32),
+    nonce BLOB NOT NULL,
+    ciphertext BLOB NOT NULL,
+    PRIMARY KEY (conversation_id, device_id)
+) STRICT;
+CREATE TABLE room_receipts (
+    message_id BLOB NOT NULL CHECK (length(message_id) = 16),
+    device_id BLOB NOT NULL CHECK (length(device_id) = 32),
+    PRIMARY KEY (message_id, device_id)
+) STRICT;
+CREATE TABLE pending_room_messages (
+    message_id BLOB PRIMARY KEY CHECK (length(message_id) = 16),
+    room_id BLOB NOT NULL CHECK (length(room_id) = 16),
+    author_account BLOB NOT NULL CHECK (length(author_account) = 32),
+    author_device BLOB NOT NULL CHECK (length(author_device) = 32),
+    created_at_ms INTEGER NOT NULL,
+    body_nonce BLOB NOT NULL,
+    body_ciphertext BLOB NOT NULL
+) STRICT;
+CREATE TABLE pending_room_ops (
+    message_id BLOB NOT NULL CHECK (length(message_id) = 16),
+    author_device BLOB NOT NULL CHECK (length(author_device) = 32),
+    room_id BLOB NOT NULL CHECK (length(room_id) = 16),
+    author_account BLOB NOT NULL CHECK (length(author_account) = 32),
+    revision INTEGER NOT NULL,
+    deleted INTEGER NOT NULL,
+    edited_at_ms INTEGER NOT NULL,
+    body_nonce BLOB NOT NULL,
+    body_ciphertext BLOB NOT NULL,
+    PRIMARY KEY (message_id, author_device)
+) STRICT;
+",
+    // v6: profile picture. Raw JPEG or PNG, capped by the protocol.
+    // avatar_updated_at_ms ignores an older picture that arrives late.
+    "
+ALTER TABLE profile ADD COLUMN avatar BLOB;
+ALTER TABLE contacts ADD COLUMN avatar BLOB;
+ALTER TABLE contacts ADD COLUMN avatar_updated_at_ms INTEGER;
+",
+    // v7: voice notes. The WAV is local. Incoming slices are held until the hash matches.
+    "
+CREATE TABLE voice_notes (
+    message_id BLOB PRIMARY KEY CHECK (length(message_id) = 16),
+    wav BLOB NOT NULL
+) STRICT;
+CREATE TABLE voice_incoming_meta (
+    message_id BLOB PRIMARY KEY CHECK (length(message_id) = 16),
+    conversation_id BLOB NOT NULL CHECK (length(conversation_id) = 16),
+    author_account BLOB NOT NULL CHECK (length(author_account) = 32),
+    author_device BLOB NOT NULL CHECK (length(author_device) = 32),
+    sent_at_ms INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    byte_len INTEGER NOT NULL,
+    sha256 BLOB NOT NULL CHECK (length(sha256) = 32),
+    chunk_count INTEGER NOT NULL,
+    waveform BLOB NOT NULL
+) STRICT;
+CREATE TABLE voice_incoming (
+    message_id BLOB NOT NULL CHECK (length(message_id) = 16),
+    chunk_index INTEGER NOT NULL,
+    bytes BLOB NOT NULL,
+    PRIMARY KEY (message_id, chunk_index)
 ) STRICT;
 ",
 ];

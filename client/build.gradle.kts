@@ -28,6 +28,13 @@ kotlin {
             baseName = "OrbitClient"
             isStatic = true
             export(project(":shared"))
+            // Static framework: the Xcode app also lists these in project.yml.
+            linkerOpts(
+                "-framework", "AVFoundation",
+                "-framework", "PhotosUI",
+                "-framework", "CoreGraphics",
+                "-framework", "UIKit",
+            )
         }
     }
 

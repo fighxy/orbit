@@ -9,7 +9,7 @@
 // Version of the native contract: C functions, JNI methods and the JSON
 // protocol. Bumped on any incompatible change; the SDK refuses to start on a
 // mismatch.
-#define ORBIT_ABI_VERSION 2
+#define ORBIT_ABI_VERSION 6
 
 #define ORBIT_OK 0
 
@@ -42,6 +42,12 @@
 #define ORBIT_ERR_INTERNAL 14
 
 #define ORBIT_ERR_WRONG_PASSCODE 15
+
+#define ORBIT_ERR_NETWORK_NOT_CONFIGURED 16
+
+#define ORBIT_ERR_INVALID_INVITE 17
+
+#define ORBIT_ERR_NETWORK 18
 
 // First byte of a passcode-locked identity secret; plain secrets start with 1.
 #define ORBIT_IDENTITY_LOCKED_TAG 16

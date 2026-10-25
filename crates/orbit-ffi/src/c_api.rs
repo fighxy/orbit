@@ -32,6 +32,9 @@ pub const ORBIT_ERR_CLOSED: i32 = 12;
 pub const ORBIT_ERR_BUSY: i32 = 13;
 pub const ORBIT_ERR_INTERNAL: i32 = 14;
 pub const ORBIT_ERR_WRONG_PASSCODE: i32 = 15;
+pub const ORBIT_ERR_NETWORK_NOT_CONFIGURED: i32 = 16;
+pub const ORBIT_ERR_INVALID_INVITE: i32 = 17;
+pub const ORBIT_ERR_NETWORK: i32 = 18;
 
 /// First byte of a passcode-locked identity secret; plain secrets start with 1.
 pub const ORBIT_IDENTITY_LOCKED_TAG: u8 = 0x10;

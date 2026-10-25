@@ -6,7 +6,13 @@
 //! independent sources of the same messages.
 
 mod cipher;
+mod delivery;
+mod rooms;
 mod schema;
+mod voice;
+pub(crate) use delivery::{DeliveryConfig, OutboxItem};
+#[cfg(test)]
+pub(crate) use voice::sample_voice_wav;
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
@@ -24,6 +30,8 @@ use cipher::LocalCipher;
 
 const DATABASE_FILE: &str = "state.sqlite";
 const LOCK_FILE: &str = "engine.lock";
+pub(super) const MESSAGE_COLUMNS: &str = "seq, id, conversation_id, author_account, author_device, created_at_ms, \
+    body_nonce, body_ciphertext, state, revision, edited_at_ms, deleted";
 
 /// A page of history in ascending `seq` order.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -108,11 +116,16 @@ impl Store {
         for row in rows {
             let (id, kind, created_at_ms) = row?;
             let id = ConversationId::from_slice(&id).map_err(|_| Error::Corrupted("conversation id"))?;
+            let kind = ConversationKind::parse(&kind)?;
+            let (title, can_post) = self.room_presentation(&id, kind)?;
             conversations.push(Conversation {
                 id,
-                kind: ConversationKind::parse(&kind)?,
+                kind,
                 created_at_ms,
                 last_message: self.last_message(&id)?,
+                contact: self.contact(&id)?,
+                title,
+                can_post,
             });
         }
         // Most recently active first; empty conversations keep creation order.
@@ -141,11 +154,10 @@ impl Store {
             Some(seq) => i64::try_from(seq).map_err(|_| Error::InvalidArgument("before_seq is too large".into()))?,
             None => i64::MAX,
         };
-        let mut statement = self.conn.prepare(
-            "SELECT seq, id, conversation_id, author_account, author_device, created_at_ms, \
-                    body_nonce, body_ciphertext, state \
-             FROM messages WHERE conversation_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3",
-        )?;
+        let mut statement = self.conn.prepare(&format!(
+            "SELECT {MESSAGE_COLUMNS} FROM messages \
+             WHERE conversation_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3"
+        ))?;
         let rows = statement.query_map(
             params![conversation.as_bytes().as_slice(), before, i64::from(limit) + 1],
             StoredMessage::from_row,
@@ -199,6 +211,9 @@ impl Store {
             created_at_ms,
             body,
             state,
+            revision: 0,
+            edited_at_ms: None,
+            deleted: false,
         })
     }
 
@@ -206,13 +221,14 @@ impl Store {
         Ok(self
             .conn
             .query_row(
-                "SELECT display_name, about, updated_at_ms FROM profile WHERE id = 1",
+                "SELECT display_name, about, updated_at_ms, avatar FROM profile WHERE id = 1",
                 [],
                 |row| {
                     Ok(Profile {
                         display_name: row.get(0)?,
                         about: row.get(1)?,
                         updated_at_ms: row.get(2)?,
+                        avatar: row.get(3)?,
                     })
                 },
             )
@@ -227,11 +243,7 @@ impl Store {
              about = excluded.about, updated_at_ms = excluded.updated_at_ms",
             params![display_name, about, updated_at_ms],
         )?;
-        Ok(Profile {
-            display_name,
-            about,
-            updated_at_ms,
-        })
+        self.profile()?.ok_or(Error::Internal("profile"))
     }
 
     fn require_conversation(&self, id: &ConversationId) -> Result<()> {
@@ -250,9 +262,7 @@ impl Store {
         let stored = self
             .conn
             .query_row(
-                "SELECT seq, id, conversation_id, author_account, author_device, created_at_ms, \
-                        body_nonce, body_ciphertext, state \
-                 FROM messages WHERE conversation_id = ?1 ORDER BY seq DESC LIMIT 1",
+                &format!("SELECT {MESSAGE_COLUMNS} FROM messages WHERE conversation_id = ?1 ORDER BY seq DESC LIMIT 1"),
                 [conversation.as_bytes().as_slice()],
                 StoredMessage::from_row,
             )
@@ -283,6 +293,9 @@ impl Store {
             created_at_ms: stored.created_at_ms,
             body,
             state: MessageState::parse(&stored.state)?,
+            revision: u32::try_from(stored.revision).map_err(|_| Error::Corrupted("message revision"))?,
+            edited_at_ms: stored.edited_at_ms,
+            deleted: stored.deleted,
         })
     }
 }
@@ -297,6 +310,9 @@ struct StoredMessage {
     body_nonce: Vec<u8>,
     body_ciphertext: Vec<u8>,
     state: String,
+    revision: i64,
+    edited_at_ms: Option<i64>,
+    deleted: bool,
 }
 
 impl StoredMessage {
@@ -311,6 +327,9 @@ impl StoredMessage {
             body_nonce: row.get(6)?,
             body_ciphertext: row.get(7)?,
             state: row.get(8)?,
+            revision: row.get(9)?,
+            edited_at_ms: row.get(10)?,
+            deleted: row.get::<_, i64>(11)? != 0,
         })
     }
 }
@@ -328,5 +347,7 @@ fn create_private_dir(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod delivery_tests;
 #[cfg(test)]
 mod tests;

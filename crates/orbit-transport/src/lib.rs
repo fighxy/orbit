@@ -1,8 +1,14 @@
 //! Client side of Orbit's network protocols over Iroh (QUIC + TLS 1.3).
 //!
-//! The QUIC handshake authenticates the node by the endpoint ID in its
-//! [`NodeAddress`]; the mailbox owner then authenticates with a signature over
-//! a node challenge (see `orbit_protocol::mailbox`).
+//! Mailbox traffic dials a pasted [`NodeAddress`] with sockets. Direct
+//! traffic dials a bare endpoint id; discovery and relay fallback live in
+//! [`direct`]. The QUIC handshake authenticates that id. A mailbox owner
+//! then authenticates with a signature over a node challenge
+//! (see `orbit_protocol::mailbox`).
+
+mod direct;
+
+pub use direct::{DirectEndpoint, DirectEnvelope, bind_direct, next_envelope, send_envelope};
 
 use ed25519_dalek::SigningKey;
 use iroh::endpoint::{Connection, presets};

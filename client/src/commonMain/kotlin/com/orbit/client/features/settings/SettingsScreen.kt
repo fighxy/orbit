@@ -51,6 +51,7 @@ import com.orbit.client.app.ThemeMode
 import com.orbit.client.app.UiPreferences
 import com.orbit.client.designsystem.Avatar
 import com.orbit.client.designsystem.Strings
+import com.orbit.client.designsystem.rememberAvatarImage
 import com.orbit.client.features.chat.ChatSession
 import com.orbit.sdk.bridge.SUPPORTED_ABI_VERSION
 import kotlinx.coroutines.launch
@@ -72,6 +73,7 @@ fun SettingsScreen(
     security: SecurityActions,
     preferences: PreferencesRepository,
     onBack: () -> Unit,
+    pickAvatar: (suspend () -> AvatarPick)? = null,
 ) {
     val identity by session.identity.collectAsState()
     val profile by session.profile.collectAsState()
@@ -91,7 +93,13 @@ fun SettingsScreen(
                 modifier = Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                ProfileSection(session, profile?.displayName.orEmpty(), profile?.about.orEmpty())
+                ProfileSection(
+                    session,
+                    profile?.displayName.orEmpty(),
+                    profile?.about.orEmpty(),
+                    profile?.avatar,
+                    pickAvatar,
+                )
                 Section(Strings.accountSection) {
                     identity?.let { id ->
                         Text(Strings.accountKey, style = MaterialTheme.typography.labelMedium)
@@ -121,6 +129,7 @@ fun SettingsScreen(
                     Text("${Strings.version}: $APP_VERSION (ABI $SUPPORTED_ABI_VERSION)")
                     Hint(Strings.storageNote)
                     Hint(Strings.networkNote)
+                    Hint(Strings.voiceLimit)
                 }
             }
         }
@@ -128,7 +137,13 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun ProfileSection(session: ChatSession, savedName: String, savedAbout: String) {
+private fun ProfileSection(
+    session: ChatSession,
+    savedName: String,
+    savedAbout: String,
+    savedAvatar: String?,
+    pickAvatar: (suspend () -> AvatarPick)?,
+) {
     var name by rememberSaveable(savedName) { mutableStateOf(savedName) }
     var about by rememberSaveable(savedAbout) { mutableStateOf(savedAbout) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -137,14 +152,45 @@ private fun ProfileSection(session: ChatSession, savedName: String, savedAbout: 
     val changed = name.trim() != savedName || about.trim() != savedAbout
     val error = ProfileRules.validate(name, about)
 
+    val picture = rememberAvatarImage(savedAvatar)
     Section(Strings.profileSection) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Avatar(name.ifBlank { null }, size = 64.dp)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Avatar(name.ifBlank { null }, size = 72.dp, image = picture)
             Spacer(Modifier.width(16.dp))
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text(name.ifBlank { "—" }, style = MaterialTheme.typography.titleMedium)
                 if (about.isNotBlank()) {
                     Text(about, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        if (pickAvatar != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(
+                    enabled = !saving,
+                    onClick = {
+                        saving = true
+                        scope.launch {
+                            status = when (val picked = pickAvatar()) {
+                                AvatarPick.Cancelled -> status
+                                is AvatarPick.Rejected -> picked.reason
+                                is AvatarPick.Image -> session.setAvatar(picked.base64) ?: Strings.saved
+                            }
+                            saving = false
+                        }
+                    },
+                ) { Text(Strings.choosePhoto) }
+                if (savedAvatar != null) {
+                    TextButton(
+                        enabled = !saving,
+                        onClick = {
+                            saving = true
+                            scope.launch {
+                                status = session.setAvatar("") ?: Strings.saved
+                                saving = false
+                            }
+                        },
+                    ) { Text(Strings.removePhoto) }
                 }
             }
         }

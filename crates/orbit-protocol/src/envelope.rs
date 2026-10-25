@@ -14,6 +14,8 @@
 //! An [`Invite`] is a device-signed [`ContactCard`]: everything needed to
 //! reach its author (identity, inbox key, node, mailbox, deposit token).
 
+use std::collections::HashSet;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
@@ -39,6 +41,10 @@ pub const MAX_CARD_NAME_BYTES: usize = 256;
 pub const MAX_CARD_NODE_BYTES: usize = 512;
 /// Most message IDs in one delivery receipt.
 pub const MAX_RECEIPT_IDS: usize = 256;
+/// Members of one pairwise group or channel, including the creator.
+pub const MAX_ROOM_MEMBERS: usize = 8;
+/// Smallest room: the creator and one other member.
+pub const MIN_ROOM_MEMBERS: usize = 2;
 
 const HPKE_INFO: &[u8] = b"orbit/envelope/v1";
 const ENVELOPE_SIGNATURE_LABEL: &[u8] = b"orbit/envelope/signature/v1\0";
@@ -138,6 +144,13 @@ impl ContactCard {
     }
 }
 
+/// Pairwise room. Postcard discriminants are append-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RoomKind {
+    Group,
+    Channel,
+}
+
 /// Application content of an envelope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Payload {
@@ -158,6 +171,92 @@ pub enum Payload {
     Delivered {
         message_ids: Vec<[u8; 16]>,
     },
+    /// Replaces the author's own text. A `revision` that is not higher is ignored.
+    /// Appended so existing postcard indexes stay valid.
+    EditText {
+        message_id: [u8; 16],
+        revision: u32,
+        text: String,
+    },
+    /// Removes the author's own text. Later edits of that message are ignored.
+    DeleteText {
+        message_id: [u8; 16],
+        revision: u32,
+    },
+    /// Membership list sealed separately for each member. Not an MLS welcome:
+    /// there is no shared epoch, and a later list does not erase old copies.
+    RoomWelcome {
+        room_id: [u8; 16],
+        kind: RoomKind,
+        title: String,
+        members: Vec<ContactCard>,
+    },
+    RoomText {
+        room_id: [u8; 16],
+        message_id: [u8; 16],
+        text: String,
+    },
+    RoomEditText {
+        room_id: [u8; 16],
+        message_id: [u8; 16],
+        revision: u32,
+        text: String,
+    },
+    RoomDeleteText {
+        room_id: [u8; 16],
+        message_id: [u8; 16],
+        revision: u32,
+    },
+    /// Profile picture sent after contact exchange. Empty clears it.
+    /// Kept out of the invite text, which is limited to 4 KiB.
+    Avatar {
+        image: Vec<u8>,
+    },
+    /// Header for a voice note split across following [`Payload::MediaChunk`]s.
+    /// A note is a PCM WAV, not a live room and not a video circle.
+    MediaStart {
+        message_id: [u8; 16],
+        duration_ms: u32,
+        byte_len: u32,
+        sha256: [u8; 32],
+        chunk_count: u16,
+        waveform: Vec<u8>,
+    },
+    /// One slice of the WAV named by [`Payload::MediaStart`].
+    MediaChunk {
+        message_id: [u8; 16],
+        index: u16,
+        #[serde(with = "serde_bytes")]
+        bytes: Vec<u8>,
+    },
+}
+
+/// Largest voice note, about 60 seconds of 16 kHz mono 16-bit PCM.
+pub const MAX_VOICE_BYTES: usize = 2 * 1024 * 1024;
+
+/// Longest voice note.
+pub const MAX_VOICE_MS: u32 = 60_000;
+
+/// Plaintext of one voice slice. The sealed envelope stays under 64 KiB.
+pub const MAX_VOICE_CHUNK_BYTES: usize = 32 * 1024;
+
+/// Waveform bars carried beside a voice note.
+pub const MAX_WAVEFORM_BARS: usize = 48;
+
+/// Upper bound on slices for one note.
+pub const MAX_VOICE_CHUNKS: usize = MAX_VOICE_BYTES.div_ceil(MAX_VOICE_CHUNK_BYTES);
+
+/// Largest profile picture carried in one envelope.
+pub const MAX_AVATAR_BYTES: usize = 32 * 1024;
+
+/// JPEG or PNG small enough for one direct envelope.
+pub fn valid_avatar(image: &[u8]) -> bool {
+    if image.is_empty() || image.len() > MAX_AVATAR_BYTES {
+        return false;
+    }
+    let jpeg = image.len() >= 3 && image[0] == 0xFF && image[1] == 0xD8 && image[2] == 0xFF;
+    let png = image.starts_with(b"\x89PNG\r\n\x1a\n");
+    jpeg || png
 }
 
 /// Decrypted and verified envelope.
@@ -296,6 +395,36 @@ pub fn open(inbox: &InboxKey, own_device: &[u8; 32], envelope: &[u8]) -> Result<
         Payload::Delivered { message_ids } if message_ids.len() > MAX_RECEIPT_IDS => {
             return Err(EnvelopeError::TooLarge);
         }
+        Payload::RoomWelcome { title, members, .. } => check_room_welcome(&inner.sender, title, members)?,
+        Payload::Avatar { image } if image.len() > MAX_AVATAR_BYTES => return Err(EnvelopeError::TooLarge),
+        Payload::Avatar { image } if !image.is_empty() && !valid_avatar(image) => {
+            return Err(EnvelopeError::Malformed);
+        }
+        Payload::MediaStart {
+            byte_len,
+            duration_ms,
+            chunk_count,
+            waveform,
+            ..
+        } => {
+            if *byte_len == 0 || usize::try_from(*byte_len).unwrap_or(usize::MAX) > MAX_VOICE_BYTES {
+                return Err(EnvelopeError::TooLarge);
+            }
+            if *duration_ms == 0 || *duration_ms > MAX_VOICE_MS || waveform.len() > MAX_WAVEFORM_BARS {
+                return Err(EnvelopeError::Malformed);
+            }
+            let count = usize::from(*chunk_count);
+            let needed = usize::try_from(*byte_len)
+                .unwrap_or(usize::MAX)
+                .div_ceil(MAX_VOICE_CHUNK_BYTES);
+            if count == 0 || count > MAX_VOICE_CHUNKS || count < needed {
+                return Err(EnvelopeError::Malformed);
+            }
+        }
+        Payload::MediaChunk { bytes, .. } if bytes.is_empty() => return Err(EnvelopeError::Malformed),
+        Payload::MediaChunk { bytes, .. } if bytes.len() > MAX_VOICE_CHUNK_BYTES => {
+            return Err(EnvelopeError::TooLarge);
+        }
         _ => {}
     }
     Ok(Opened {
@@ -369,6 +498,31 @@ impl Invite {
         }
         Ok(invite)
     }
+}
+
+fn check_room_welcome(sender: &DeviceIdentity, title: &str, members: &[ContactCard]) -> Result<()> {
+    if title.is_empty() || title.len() > MAX_CARD_NAME_BYTES {
+        return Err(EnvelopeError::Malformed);
+    }
+    if !(MIN_ROOM_MEMBERS..=MAX_ROOM_MEMBERS).contains(&members.len()) {
+        return Err(EnvelopeError::TooLarge);
+    }
+    let mut devices = HashSet::with_capacity(members.len());
+    let mut includes_sender = false;
+    for card in members {
+        card.check_limits()?;
+        card.identity.verify()?;
+        if !devices.insert(card.identity.device) {
+            return Err(EnvelopeError::Malformed);
+        }
+        if card.identity == *sender {
+            includes_sender = true;
+        }
+    }
+    if !includes_sender {
+        return Err(EnvelopeError::BadSignature);
+    }
+    Ok(())
 }
 
 fn verify(public_key: &[u8; 32], message: &[u8], signature: &SignatureBytes) -> Result<()> {
@@ -529,6 +683,31 @@ mod tests {
         );
         let own = seal_from(&alice, &bob, &payload);
         assert_eq!(open(&bob.inbox, &bob.device_id(), &own).unwrap().payload, payload);
+    }
+
+    #[test]
+    fn room_welcome_names_the_sender_and_round_trips() {
+        let (alice, bob) = (Party::new(10), Party::new(20));
+        let welcome = Payload::RoomWelcome {
+            room_id: [3; 16],
+            kind: RoomKind::Channel,
+            title: "новости".into(),
+            members: vec![alice.card(), bob.card()],
+        };
+        let opened = open(&bob.inbox, &bob.device_id(), &seal_from(&alice, &bob, &welcome)).unwrap();
+        assert_eq!(opened.payload, welcome);
+
+        let eve = Party::new(30);
+        let without_sender = Payload::RoomWelcome {
+            room_id: [3; 16],
+            kind: RoomKind::Group,
+            title: "кухня".into(),
+            members: vec![bob.card(), eve.card()],
+        };
+        assert_eq!(
+            open(&bob.inbox, &bob.device_id(), &seal_from(&alice, &bob, &without_sender)),
+            Err(EnvelopeError::BadSignature)
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Holepunch Component Map
 
-This document is a reference map of the [Holepunch ecosystem](https://github.com/holepunchto), not Orbit's implemented dependency graph. Orbit is planned around its own Rust protocol, with Kotlin Multiplatform bridges and clients.
+This document is a reference map of the [Holepunch ecosystem](https://github.com/holepunchto), not Orbit's implemented dependency graph. Orbit uses its own Rust protocol. It does not speak Holepunch on the wire. Bridges and clients are Kotlin Multiplatform.
 
 See the [architecture decision](adr/0001-rust-core-kmp-clients.md), [reviewed architecture](architecture/rust-kmp.md), and [implementation roadmap](roadmap.md). The architecture document maps these functions to proposed Orbit modules.
 
@@ -131,6 +131,6 @@ See the [architecture decision](adr/0001-rust-core-kmp-clients.md), [reviewed ar
 - Start with `orbit-core` and `orbit-ffi`; extract other crates when their boundaries are demonstrated.
 - Use existing transport, cryptographic, and media libraries after platform experiments.
 - JavaScript engines, Bare, and Pear are reference material, not planned Orbit runtime requirements.
-- Root `package.json` currently remains a historical dependency inventory. Its cleanup is tracked in the roadmap; installed packages do not demonstrate an implemented integration.
-- Protocol and storage compatibility with Holepunch are not requirements of the selected design.
+- The historical root `package.json` was moved to `tools/reference-holepunch/`. It is not a runtime dependency. Installed packages there do not demonstrate an Orbit integration.
+- Protocol and storage compatibility with Holepunch are not requirements of the selected design. Wire compatibility is not implemented and is not a goal.
 

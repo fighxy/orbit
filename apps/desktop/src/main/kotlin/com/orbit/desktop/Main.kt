@@ -1,6 +1,8 @@
 package com.orbit.desktop
 
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.key.Key
@@ -11,6 +13,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.MenuBar
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
@@ -23,6 +26,7 @@ import com.orbit.client.app.OrbitApp
 import com.orbit.client.app.PreferencesRepository
 import com.orbit.client.app.PreferencesStorage
 import com.orbit.client.app.ShellNavigation
+import com.orbit.client.designsystem.Strings
 import com.orbit.client.app.asGateway
 import com.orbit.sdk.OrbitSdk
 import com.orbit.sdk.bridge.JniNativeLibrary
@@ -62,10 +66,13 @@ fun main() {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     val controller = AppController(sdk.asGateway(), scope)
     controller.start()
-    val linux = System.getProperty("os.name").lowercase().contains("linux")
+    val os = System.getProperty("os.name").lowercase()
+    val linux = os.contains("linux")
+    val nodeHost = if (os.contains("win")) WindowsNodeHost(locateOrbitNodeExecutable()) else null
     val appIcon = loadIcon()
 
     application {
+        val voice = remember { DesktopVoiceHost() }
         val windowState = rememberWindowState(
             placement = if (storage.read(KEY_MAXIMIZED) == "true") WindowPlacement.Maximized else WindowPlacement.Floating,
             position = storage.readPosition(),
@@ -76,7 +83,9 @@ fun main() {
             icon = appIcon,
             state = windowState,
             onCloseRequest = {
+                voice.release()
                 storage.writeWindow(windowState)
+                nodeHost?.stop()
                 // Close the engine so the storage lock is released before exit.
                 runBlocking { controller.close() }
                 exitApplication()
@@ -85,7 +94,11 @@ fun main() {
                 if (event.type != KeyEventType.KeyDown) return@Window false
                 when {
                     event.key == Key.Comma && (event.isCtrlPressed || event.isMetaPressed) -> {
-                        if (controller.state.value is AppState.Ready) navigation.settingsOpen = true
+                        if (controller.state.value is AppState.Ready) {
+                            navigation.hostOpen = false
+                            navigation.contactsOpen = false
+                            navigation.settingsOpen = true
+                        }
                         true
                     }
                     event.key == Key.Escape -> navigation.back()
@@ -93,8 +106,39 @@ fun main() {
                 }
             },
         ) {
-            LaunchedEffect(Unit) { window.minimumSize = Dimension(420, 560) }
-            OrbitApp(controller, preferences, navigation, linuxDesktop = linux)
+            val ready = controller.state.collectAsState().value is AppState.Ready
+            MenuBar {
+                Menu("Orbit") {
+                    Item(
+                        Strings.settings,
+                        enabled = ready,
+                        onClick = {
+                            navigation.hostOpen = false
+                            navigation.contactsOpen = false
+                            navigation.settingsOpen = true
+                        },
+                    )
+                }
+                if (nodeHost != null) {
+                    Menu(Strings.nodeMenu) {
+                        Item(Strings.becomeNode, onClick = { navigation.openHost() })
+                    }
+                }
+            }
+            LaunchedEffect(Unit) {
+                val scale = window.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
+                val factor = scale.toFloat().coerceAtLeast(1f)
+                window.minimumSize = Dimension((880 * factor).toInt(), (620 * factor).toInt())
+            }
+            OrbitApp(
+                controller,
+                preferences,
+                navigation,
+                linuxDesktop = linux,
+                nodeHost = nodeHost,
+                voice = voice,
+                pickAvatar = { pickDesktopAvatar(window) },
+            )
         }
     }
 }

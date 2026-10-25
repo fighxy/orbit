@@ -163,6 +163,9 @@ mod tests {
                 created_at_ms: 0,
                 body: crate::domain::MessageBody::Text { text: "x".into() },
                 state: crate::domain::MessageState::SavedLocally,
+                revision: 0,
+                edited_at_ms: None,
+                deleted: false,
             },
         }
     }
@@ -204,6 +207,8 @@ mod tests {
                 Event::MessageAdded { .. } => "message",
                 Event::ProfileChanged { .. } => "profile",
                 Event::CommandSucceeded { .. } => "ok",
+                Event::ContactsChanged => "contacts",
+                Event::NetworkChanged { .. } => "network",
             })
             .collect();
         assert_eq!(kinds, vec!["result", "resync", "message"]);
